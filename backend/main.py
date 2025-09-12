@@ -1146,7 +1146,7 @@ async def analyze_scene(file: UploadFile = File(...)):
         
         focused = _focused_description(objects)
         
-        # Combine scene caption with object-focused description and text
+        # Combine scene caption with object-focused description (text handled separately)
         description_parts = [f"Scene: {scene_caption}"]
         
         if objects:
@@ -1154,8 +1154,8 @@ async def analyze_scene(file: UploadFile = File(...)):
         else:
             description_parts.append("No specific objects detected in view")
             
-        if extracted_text:
-            description_parts.append(f"Text found: {extracted_text}")
+        # DON'T include text in scene description - frontend will handle it separately
+        # This prevents text duplication when speaking
         
         full_description = ". ".join(description_parts) + "."
         
@@ -1221,11 +1221,8 @@ async def real_time_guidance(file: UploadFile = File(...), question: str = Form(
 
         focused = _focused_description(objects)
         
-        # Enhance scene description with text if available
-        if extracted_text:
-            focused_with_text = f"{focused}. Text visible: {extracted_text}"
-        else:
-            focused_with_text = focused
+        # Don't include text in scene description to prevent duplication
+        # Frontend will handle extracted text separately
         
         # Use enhanced guidance computation with precise positioning
         guidance = _compute_guidance(objects, question, img_width, img_height)
@@ -1237,7 +1234,7 @@ async def real_time_guidance(file: UploadFile = File(...), question: str = Form(
             "distance": guidance["distance"],
             "confidence": float(guidance["confidence"]),
             "instruction": guidance["instruction"],
-            "scene_description": focused_with_text,
+            "scene_description": focused,
             "objects": objects,
             "obstacles": [ObstacleInfo(**o) for o in guidance.get("obstacles", [])],
         }

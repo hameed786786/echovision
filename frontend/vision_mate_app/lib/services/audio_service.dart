@@ -42,14 +42,38 @@ class AudioService {
         _processNextInQueue();
       });
 
-      // Initialize STT
+      // Initialize STT with better configuration
       bool available = await _speech.initialize(
-        onStatus: (val) => print('STT status: $val'),
-        onError: (val) => print('STT error: $val'),
+        onStatus: (val) {
+          print('STT status: $val');
+          if (val == 'listening') {
+            print('🎙️ Microphone is active - ready for speech');
+          } else if (val == 'notListening') {
+            print('🔇 Speech recognition stopped');
+          }
+        },
+        onError: (val) {
+          print('STT error: $val');
+          if (val.errorMsg == 'error_no_match') {
+            print('⚠️ No speech detected - make sure to speak clearly');
+          } else if (val.errorMsg == 'error_speech_timeout') {
+            print('⏰ Speech timeout - no speech detected in time limit');
+          }
+        },
       );
 
       if (!available) {
-        print('Speech recognition not available');
+        print('⚠️ Speech recognition not available on this device');
+      } else {
+        print('✅ Speech recognition initialized successfully');
+        
+        // Get available locales for debugging
+        try {
+          List<stt.LocaleName> locales = await _speech.locales();
+          print('Available speech locales: ${locales.take(5).map((l) => l.localeId).join(', ')}...');
+        } catch (e) {
+          print('Could not get locales: $e');
+        }
       }
 
       _isInitialized = true;
@@ -194,18 +218,40 @@ class AudioService {
     }
 
     try {
-      // Check if speech recognition is available
+      // Re-initialize speech recognition with proper error handling
+      print('AudioService: Re-initializing speech recognition...');
       bool available = await _speech.initialize(
-        onStatus: (val) => print('AudioService: STT status: $val'),
-        onError: (val) => print('AudioService: STT error: $val'),
+        onStatus: (val) {
+          print('AudioService: STT status: $val');
+          if (val == 'listening') {
+            print('🎙️ MICROPHONE IS NOW ACTIVE - SPEAK NOW!');
+          }
+        },
+        onError: (val) {
+          print('AudioService: STT error: $val');
+          if (val.errorMsg == 'error_no_match') {
+            print('🔇 NO SPEECH DETECTED - Try speaking louder or closer to microphone');
+          }
+        },
       );
 
       if (!available) {
-        print('AudioService: Speech recognition not available');
+        print('AudioService: Speech recognition not available on this device');
         return null;
       }
 
       print('AudioService: Speech recognition initialized successfully');
+
+      // Check available locales
+      List<stt.LocaleName> locales = await _speech.locales();
+      print('AudioService: Available locales: ${locales.map((l) => '${l.localeId} (${l.name})').join(', ')}');
+
+      // Find best English locale
+      stt.LocaleName? englishLocale = locales.firstWhere(
+        (locale) => locale.localeId.toLowerCase().startsWith('en'),
+        orElse: () => locales.isNotEmpty ? locales.first : stt.LocaleName('en-US', 'English (US)'),
+      );
+      print('AudioService: Selected locale: ${englishLocale.localeId} (${englishLocale.name})');
 
       // Check microphone permission
       bool hasPermission = await _speech.hasPermission;
@@ -213,11 +259,16 @@ class AudioService {
 
       if (!hasPermission) {
         print('AudioService: Requesting microphone permission...');
-        bool permissionGranted = await _speech.initialize();
+        // Try to initialize again to request permissions
+        bool permissionGranted = await _speech.initialize(
+          onStatus: (val) => print('AudioService: Permission STT status: $val'),
+          onError: (val) => print('AudioService: Permission STT error: $val'),
+        );
         if (!permissionGranted) {
           print('AudioService: Microphone permission denied');
           return null;
         }
+        print('AudioService: Microphone permission granted');
       }
 
       String? recognizedText;
@@ -227,11 +278,13 @@ class AudioService {
       print('\n${'🎙️' * 35}');
       print('🎙️ STARTING SPEECH RECOGNITION');
       print('🎙️ Timeout: ${timeout?.inSeconds ?? 15} seconds');
-      print('🎙️ Please speak now...');
+      print('🎙️ Locale: ${englishLocale.localeId}');
+      print('🎙️ Please speak clearly and loudly...');
       print('🎙️' * 35 + '\n');
 
       print('AudioService: Starting to listen...');
 
+      // Enhanced listening with better parameters
       await _speech.listen(
         onResult: (val) {
           recognizedText = val.recognizedWords;
@@ -242,6 +295,10 @@ class AudioService {
           print('   Text: "${recognizedText ?? 'No text'}"');
           print('   Type: ${val.finalResult ? 'FINAL' : 'PARTIAL'}');
           print('   Confidence: ${(val.confidence * 100).toStringAsFixed(1)}%');
+          print('   Has alternatives: ${val.alternates.isNotEmpty}');
+          if (val.alternates.isNotEmpty) {
+            print('   Alternatives: ${val.alternates.map((alt) => '"${alt.recognizedWords}" (${(alt.confidence * 100).toStringAsFixed(1)}%)').join(', ')}');
+          }
           print('=' * 60);
 
           // Additional debugging info
@@ -261,31 +318,43 @@ class AudioService {
           }
         },
         onSoundLevelChange: (level) {
-          print('AudioService: Sound level: $level');
+          // Only log significant sound levels to avoid spam
+          if (level > 0.1) {
+            print('AudioService: Sound level: ${level.toStringAsFixed(2)} (Good!)');
+          } else if (level > 0.01) {
+            print('AudioService: Sound level: ${level.toStringAsFixed(3)} (Quiet)');
+          }
         },
-        listenFor: timeout ?? const Duration(seconds: 15),
-        pauseFor: const Duration(seconds: 3),
+        localeId: englishLocale.localeId,
+        listenFor: timeout ?? const Duration(seconds: 20), // Increased timeout
+        pauseFor: const Duration(seconds: 2), // Reduced pause duration
         partialResults: true, // Enable partial results for better feedback
-        cancelOnError: true,
+        cancelOnError: false, // Don't cancel on error, continue listening
+        listenMode: stt.ListenMode.confirmation, // Use confirmation mode for better accuracy
       );
 
       print('AudioService: Listening started, waiting for speech...');
 
       // Wait for listening to complete or timeout
       int waitTime = 0;
-      int maxWaitTime = (timeout?.inMilliseconds ?? 15000);
+      int maxWaitTime = (timeout?.inMilliseconds ?? 20000);
 
       while (!isComplete && _speech.isListening && waitTime < maxWaitTime) {
-        await Future.delayed(const Duration(milliseconds: 200));
-        waitTime += 200;
+        await Future.delayed(const Duration(milliseconds: 300));
+        waitTime += 300;
 
-        // Log progress every 2 seconds
-        if (waitTime % 2000 == 0) {
-          print(
-            'AudioService: Still listening... ${waitTime ~/ 1000}s elapsed',
-          );
+        // Log progress every 3 seconds with tips
+        if (waitTime % 3000 == 0) {
+          int secondsElapsed = waitTime ~/ 1000;
+          print('AudioService: Still listening... ${secondsElapsed}s elapsed');
           print('AudioService: Is listening: ${_speech.isListening}');
           print('AudioService: Current text: "$recognizedText"');
+          
+          if (secondsElapsed == 6 && (recognizedText == null || recognizedText!.isEmpty)) {
+            print('💡 TIP: Speak clearly and loudly. Make sure you\'re close to the microphone.');
+          } else if (secondsElapsed == 12 && (recognizedText == null || recognizedText!.isEmpty)) {
+            print('💡 TIP: Try speaking a simple phrase like "What is this?" or "Describe this scene"');
+          }
         }
       }
 
@@ -302,9 +371,7 @@ class AudioService {
       print('📋 SPEECH RECOGNITION SUMMARY:');
       print('📋 Final Text: "${recognizedText ?? 'NONE'}"');
       print('📋 Text Length: ${recognizedText?.length ?? 0} characters');
-      print(
-        '📋 Session Status: ${isComplete ? 'COMPLETED' : 'TIMEOUT/INCOMPLETE'}',
-      );
+      print('📋 Session Status: ${isComplete ? 'COMPLETED' : 'TIMEOUT/INCOMPLETE'}');
       print('📋' * 40 + '\n');
 
       print('AudioService: Final recognized text: "$recognizedText"');
@@ -325,6 +392,11 @@ class AudioService {
         print('\n${'❌' * 35}');
         print('❌ NO SPEECH RECOGNIZED');
         print('❌ Reason: Empty or null text');
+        print('❌ Troubleshooting tips:');
+        print('❌ 1. Check microphone permissions');
+        print('❌ 2. Speak louder and clearer');
+        print('❌ 3. Reduce background noise');
+        print('❌ 4. Hold device closer to mouth');
         print('❌' * 35 + '\n');
 
         print('AudioService: No meaningful text recognized');
@@ -353,6 +425,30 @@ class AudioService {
     try {
       return await _speech.hasPermission;
     } catch (e) {
+      return false;
+    }
+  }
+
+  static Future<bool> checkMicrophonePermission() async {
+    try {
+      if (!_isInitialized) await initialize();
+      
+      bool hasPermission = await _speech.hasPermission;
+      print('AudioService: Microphone permission status: $hasPermission');
+      
+      if (!hasPermission) {
+        print('AudioService: Attempting to request microphone permission...');
+        bool granted = await _speech.initialize(
+          onStatus: (val) => print('Permission STT status: $val'),
+          onError: (val) => print('Permission STT error: $val'),
+        );
+        print('AudioService: Permission request result: $granted');
+        return granted;
+      }
+      
+      return true;
+    } catch (e) {
+      print('AudioService: Error checking microphone permission: $e');
       return false;
     }
   }

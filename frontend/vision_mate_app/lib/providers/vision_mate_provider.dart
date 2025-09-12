@@ -181,17 +181,31 @@ class VisionMateProvider extends ChangeNotifier {
       _currentState = AppState.listening;
       notifyListeners();
 
+      // Check microphone permissions first
+      print('VisionMateProvider: Checking microphone permissions...');
+      bool hasPermission = await AudioService.checkMicrophonePermission();
+      if (!hasPermission) {
+        print('VisionMateProvider: Microphone permission denied');
+        await AudioService.speakImportant(
+          'I need microphone permission to hear your questions. Please grant microphone access in settings.',
+        );
+        await HapticService.errorPattern();
+        _currentState = AppState.idle;
+        notifyListeners();
+        return;
+      }
+
       // Provide clear audio feedback
-      await AudioService.speakStatus('I am listening. Please ask your question now.');
+      await AudioService.speakStatus('I am listening. Please ask your question clearly and loudly.');
       await HapticService.lightVibration();
 
-      // Small delay to ensure TTS finishes before starting STT
-      await Future.delayed(const Duration(milliseconds: 1000));
+      // Longer delay to ensure TTS finishes before starting STT
+      await Future.delayed(const Duration(milliseconds: 1500));
 
       // Listen for question with enhanced debugging
       print('VisionMateProvider: Starting voice recognition...');
       String? question = await AudioService.listen(
-        timeout: const Duration(seconds: 15), // Increased timeout
+        timeout: const Duration(seconds: 20), // Increased timeout
       );
       print('VisionMateProvider: Voice recognition completed');
       print('VisionMateProvider: Recognized question: "$question"');
@@ -199,7 +213,7 @@ class VisionMateProvider extends ChangeNotifier {
       if (question == null || question.trim().isEmpty) {
         print('VisionMateProvider: No question received');
         await AudioService.speakImportant(
-          'I did not hear any question. Please try again by swiping right.',
+          'I did not hear any question. Please try again by swiping right. Speak clearly and loudly.',
         );
         await HapticService.errorPattern();
         return;
