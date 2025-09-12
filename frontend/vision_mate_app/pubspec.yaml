@@ -49,7 +49,7 @@ dependencies:
   vibration: ^2.0.0
   
   # AR and Depth Sensing
-  arkit_plugin: ^0.11.0
+  arkit_plugin: ^1.2.1
   device_info_plus: ^10.1.2
   
   # Utilities
