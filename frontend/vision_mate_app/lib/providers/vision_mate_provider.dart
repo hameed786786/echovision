@@ -566,29 +566,36 @@ class VisionMateProvider extends ChangeNotifier {
         if (response['status'] == 'found') {
           await HapticService.successPattern();
           
-          // Provide enhanced positioning information
+          // Provide simple, accurate positioning information
           if (response['precise_position'] != null) {
             Map<String, dynamic> precisePos = response['precise_position'];
             
-            // Wait a moment then provide navigation details
-            await Future.delayed(Duration(milliseconds: 1200));
+            await Future.delayed(Duration(milliseconds: 800));
             
-            // Announce turn-by-turn navigation with proper pacing
-            if (precisePos['navigation_steps'] != null) {
-              List<dynamic> steps = precisePos['navigation_steps'];
-              await AudioService.speakInstruction('Here are your navigation steps:');
-              
-              for (int i = 0; i < steps.length && i < 3; i++) {
-                await Future.delayed(Duration(milliseconds: 1000)); // Better pacing
-                await AudioService.speakInstruction('Step ${i + 1}: ${steps[i].toString()}');
-              }
+            // Simple position and distance announcement
+            double angle = precisePos['angle_degrees'] ?? 0.0;
+            double distance = precisePos['distance_meters'] ?? 0.0;
+            String distanceSource = precisePos['distance_source'] ?? 'estimated';
+            
+            // Create clear, concise location description
+            String angleDescription = '';
+            if (angle.abs() < 3) {
+              angleDescription = 'directly ahead';
+            } else {
+              angleDescription = '${angle.abs().round()} degrees to your ${angle < 0 ? 'left' : 'right'}';
             }
             
-            // Provide distance guidance with better timing
-            if (precisePos['distance_guidance'] != null) {
-              await Future.delayed(Duration(milliseconds: 1000));
-              await AudioService.speakInstruction('Distance guidance: ${precisePos['distance_guidance']}');
+            String distanceDescription = '';
+            if (distance < 1) {
+              distanceDescription = '${(distance * 100).round()} centimeters away';
+            } else {
+              distanceDescription = '${distance.toStringAsFixed(1)} meters away';
             }
+            
+            // Add measurement confidence indicator
+            String confidenceNote = distanceSource == 'LiDAR' ? ' (precise measurement)' : ' (estimated)';
+            
+            await AudioService.speakAnnouncement('Found! The ${response['object_name']} is $angleDescription, $distanceDescription$confidenceNote.');
           }
           
           // Legacy support for basic positioning

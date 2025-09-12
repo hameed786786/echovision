@@ -1201,42 +1201,29 @@ async def find_specific_object(file: UploadFile = File(...), query: str = Form(.
             # Calculate precise position using enhanced positioning
             precise_pos = _calculate_precise_position(best_match, img_width, img_height)
             
-            # Generate detailed navigation instruction
+            # Generate simple position description
             angle = precise_pos["angle"]
             distance_m = precise_pos["distance_meters"]
+            distance_source = precise_pos["distance_source"]
             
-            # Create detailed turn-by-turn instruction
-            if abs(angle) < 2:
-                direction_instruction = "The object is directly in front of you."
-                navigation_steps = ["Continue walking straight ahead"]
+            # Create clear position description without navigation
+            if abs(angle) < 3:
+                position_description = "directly ahead"
             elif abs(angle) < 15:
-                direction_instruction = f"The object is {abs(angle):.1f} degrees to your {'left' if angle < 0 else 'right'}."
-                navigation_steps = [
-                    f"Turn slightly {'left' if angle < 0 else 'right'} by about {abs(angle):.0f} degrees",
-                    "Then walk straight towards the object"
-                ]
+                position_description = f"{abs(angle):.1f} degrees to your {'left' if angle < 0 else 'right'}"
             elif abs(angle) < 45:
-                direction_instruction = f"The object is {abs(angle):.1f} degrees to your {'left' if angle < 0 else 'right'}."
-                navigation_steps = [
-                    f"Turn {'left' if angle < 0 else 'right'} by {abs(angle):.0f} degrees",
-                    f"Walk forward approximately {distance_m:.1f} meters"
-                ]
+                position_description = f"{abs(angle):.1f} degrees to your {'left' if angle < 0 else 'right'}"
             else:
-                direction_instruction = f"The object is {abs(angle):.1f} degrees to your {'left' if angle < 0 else 'right'} - almost behind you."
-                navigation_steps = [
-                    f"Turn around {'left' if angle < 0 else 'right'} by {abs(angle):.0f} degrees",
-                    f"Walk forward approximately {distance_m:.1f} meters"
-                ]
+                position_description = f"{abs(angle):.1f} degrees to your {'left' if angle < 0 else 'right'} (almost behind you)"
             
-            # Distance guidance
+            # Simple distance description
             if distance_m < 1:
-                distance_guidance = "You're very close. Move carefully."
-            elif distance_m < 3:
-                distance_guidance = f"Take about {int(distance_m * 1.5)} steps forward."
-            elif distance_m < 10:
-                distance_guidance = f"Walk about {distance_m:.0f} meters forward."
+                distance_description = f"{int(distance_m * 100)} centimeters"
             else:
-                distance_guidance = f"The object is quite far - about {distance_m:.0f} meters away."
+                distance_description = f"{distance_m:.1f} meters"
+            
+            # Confidence note
+            confidence_note = "precise" if distance_source == "LiDAR" else "estimated"
             
             response = {
                 "status": "found",
@@ -1244,18 +1231,18 @@ async def find_specific_object(file: UploadFile = File(...), query: str = Form(.
                 "confidence": float(best_match.confidence),
                 "position": precise_pos["position"],
                 "distance": f"{distance_m:.1f} meters",
-                "message": f"Found {best_match.name}! {direction_instruction} Distance: {distance_m:.1f} meters.",
+                "message": f"Found {best_match.name}! Located {position_description}, {distance_description} away ({confidence_note}).",
                 "bbox": best_match.bbox,
                 "precise_position": {
                     "angle_degrees": angle,
                     "distance_meters": distance_m,
+                    "distance_source": distance_source,
+                    "position_description": position_description,
+                    "distance_description": distance_description,
+                    "confidence_note": confidence_note,
                     "coordinates": precise_pos["coordinates"],
-                    "direction_instruction": direction_instruction,
-                    "navigation_steps": navigation_steps,
-                    "distance_guidance": distance_guidance
+                    "confidence": precise_pos["confidence"]
                 },
-                "navigation_instruction": f"{direction_instruction} {distance_guidance}",
-                "step_by_step": navigation_steps,
                 "all_detected": [obj.to_client_dict() for obj in all_objects[:5]]
             }
             
