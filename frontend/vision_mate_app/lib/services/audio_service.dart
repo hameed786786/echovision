@@ -321,7 +321,7 @@ class AudioService {
       Completer<void> listeningCompleter = Completer<void>();
 
       print('\n🎙️ STARTING FRESH SPEECH RECOGNITION SESSION 🎙️');
-      print('You have ${timeout?.inSeconds ?? 30} seconds to speak...');
+      print('You have ${timeout?.inSeconds ?? 20} seconds to speak...');
       print('The app will wait 6 seconds after you stop speaking...');
       print('Speak clearly now!\n');
 
@@ -346,7 +346,7 @@ class AudioService {
             finalResult = result.recognizedWords;
           }
         },
-        listenFor: timeout ?? const Duration(seconds: 30), // Total listening time
+        listenFor: timeout ?? const Duration(seconds: 20),
         pauseFor: const Duration(seconds: 3), // Reduced pause - too long might cause timeout
         partialResults: true,
         cancelOnError: false,

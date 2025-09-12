@@ -210,7 +210,7 @@ class VisionMateProvider extends ChangeNotifier {
       }
 
       // Provide clear audio feedback
-      await AudioService.speakStatus('I am listening. Take your time and ask your question clearly. You have 30 seconds.');
+      await AudioService.speakStatus('I am listening. Take your time and ask your question clearly. You have 20 seconds.');
       await HapticService.lightVibration();
 
       // Longer delay to ensure TTS finishes before starting STT
@@ -224,7 +224,7 @@ class VisionMateProvider extends ChangeNotifier {
       // Listen for question with enhanced debugging
       print('VisionMateProvider: Starting voice recognition...');
       String? question = await AudioService.listen(
-        timeout: const Duration(seconds: 30), // Increased timeout to give more time for questions
+        timeout: const Duration(seconds: 20),
       );
       print('VisionMateProvider: Voice recognition completed');
       print('VisionMateProvider: Recognized question: "$question"');
@@ -494,7 +494,7 @@ class VisionMateProvider extends ChangeNotifier {
       await HapticService.lightVibration();
 
       // Listen for destination
-      String? destination = await AudioService.listen(timeout: Duration(seconds: 30));
+      String? destination = await AudioService.listen(timeout: Duration(seconds: 20));
       if (destination?.trim().isEmpty ?? true) {
         await AudioService.speakImportant('No destination received. Please try again.');
         return;
@@ -689,7 +689,7 @@ class VisionMateProvider extends ChangeNotifier {
       
       // Wait for first message to complete, then give the time instruction
       await Future.delayed(Duration(milliseconds: 1500));
-      await AudioService.speakStatus('Take your time, you have 30 seconds.');
+      await AudioService.speakStatus('Take your time, you have 20 seconds.');
       
       // Wait for instruction to complete and ensure TTS is finished
       await Future.delayed(Duration(milliseconds: 2500));
@@ -705,7 +705,7 @@ class VisionMateProvider extends ChangeNotifier {
       await HapticService.lightVibration();
 
       // Listen for user's voice command with extended timeout
-      String? voiceCommand = await AudioService.listen(timeout: Duration(seconds: 30));
+      String? voiceCommand = await AudioService.listen(timeout: Duration(seconds: 20));
       if (voiceCommand?.trim().isEmpty ?? true) {
         await AudioService.speakImportant('No voice command received. Please try again.');
         return;
@@ -858,7 +858,7 @@ class VisionMateProvider extends ChangeNotifier {
       await HapticService.lightVibration();
 
       // Listen for user's destination
-      String? destination = await AudioService.listen(timeout: Duration(seconds: 30));
+      String? destination = await AudioService.listen(timeout: Duration(seconds: 20));
       if (destination?.trim().isEmpty ?? true) {
         await AudioService.speakImportant('No destination received. Please try again.');
         return;
