@@ -18,8 +18,21 @@ from ultralytics import YOLO
 from transformers import BlipProcessor, BlipForConditionalGeneration
 import easyocr
 
+import socket
+
 load_dotenv()
 
+def get_local_ip():
+    """Get the local IP address of this machine"""
+    try:
+        # Connect to a remote address (doesn't actually send data)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        return "localhost"
+
+# Set up Hugging Face authentication
 huggingface_token = os.getenv("HUGGINGFACE_TOKEN")
 if huggingface_token:
     os.environ["HUGGINGFACE_HUB_TOKEN"] = huggingface_token
@@ -27,9 +40,11 @@ if huggingface_token:
 else:
     print("⚠️  No Hugging Face token found - some models may download slower")
 
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Global variables for models
 yolo_model = None
 blip_model = None
 blip_processor = None
@@ -37,25 +52,30 @@ openai_client = None
 ocr_reader = None
 device = None
 
+# API Models
 from pydantic import BaseModel, root_validator, Field
 from typing import List, Optional, Dict, Any
 
 
 class ObjectDetection(BaseModel):
+    """Represents an object detection; supports either bbox=[x1,y1,x2,y2] or x,y,w,h from frontend."""
     name: str
     confidence: float
-    bbox: Optional[List[float]] = None
+    # Accept either format (both optional for input flexibility)
+    bbox: Optional[List[float]] = None  # [x1,y1,x2,y2]
     x: Optional[float] = None
     y: Optional[float] = None
     w: Optional[float] = None
     h: Optional[float] = None
-    distance: Optional[float] = None
-    is_lidar_measured: bool = False
-    position: Optional[str] = None
-    angle: Optional[float] = None
+    # Enhanced fields for LiDAR and positioning
+    distance: Optional[float] = None  # Distance in meters
+    is_lidar_measured: bool = False  # Whether distance was measured using LiDAR
+    position: Optional[str] = None  # Position description (e.g., "center left")
+    angle: Optional[float] = None  # Angle from center in degrees
 
     @root_validator(pre=True)
-    def ensure_bbox(cls, values):
+    def ensure_bbox(cls, values):  # type: ignore
+        # If bbox not provided but x,y,w,h are, build it
         if 'bbox' not in values or values.get('bbox') is None:
             x = values.get('x')
             y = values.get('y')
@@ -73,6 +93,7 @@ class ObjectDetection(BaseModel):
         return values
 
     def to_client_dict(self) -> dict:
+        """Return dict shape expected by Flutter (x,y,w,h) with enhanced data."""
         if self.bbox and len(self.bbox) == 4:
             x1, y1, x2, y2 = self.bbox
             x = int(x1)
@@ -80,6 +101,7 @@ class ObjectDetection(BaseModel):
             w = int(max(0, x2 - x1))
             h = int(max(0, y2 - y1))
         else:
+            # Fall back to provided separate values
             x = int(self.x or 0)
             y = int(self.y or 0)
             w = int(self.w or 0)
@@ -94,6 +116,7 @@ class ObjectDetection(BaseModel):
             "h": h,
         }
         
+        # Add enhanced data if available
         if self.distance is not None:
             result["distance"] = float(self.distance)
             result["is_lidar_measured"] = self.is_lidar_measured
@@ -109,18 +132,18 @@ class ObjectDetection(BaseModel):
 
 class QuestionRequest(BaseModel):
     question: str
-    scene_description: Optional[str] = ""
-    objects: Optional[List[ObjectDetection]] = None
+    scene_description: Optional[str] = ""  # optional => prevents 422
+    objects: Optional[List[ObjectDetection]] = None  # will coerce to [] in logic
 
 
 class ObjectSearchRequest(BaseModel):
-    image_data: str
-    object_name: str
+    image_data: str  # base64 encoded image
+    object_name: str  # object to search for
 
 
 class NavigationRequest(BaseModel):
-    image_data: str
-    destination: str
+    image_data: str  # base64 encoded image
+    destination: str  # place or object to navigate to
 
 
 class AnswerResponse(BaseModel):
@@ -149,6 +172,7 @@ class GuideResponse(BaseModel):
     objects: List[ObjectDetection]
     obstacles: List[ObstacleInfo] = Field(default_factory=list)
 
+# Create FastAPI app
 app = FastAPI(
     title="Vision Mate Backend",
     description="AI-powered navigation assistant for visually impaired users",
@@ -157,19 +181,23 @@ app = FastAPI(
 
 @app.on_event("startup")
 async def startup_event():
+    """Load models on startup"""
     global yolo_model, blip_model, blip_processor, openai_client, ocr_reader, device
     
     try:
         print("🔄 Loading AI models...")
         logger.info("Starting up...")
         
+        # Detect device
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logger.info(f"Using device: {device}")
         print(f"🔧 Using device: {device}")
         
+        # Load YOLOv8n model
         logger.info("Loading YOLOv8n model...")
         print("🔄 Loading YOLOv8n model...")
         try:
+            # Handle PyTorch 2.6+ compatibility for YOLO model loading
             import warnings
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -181,6 +209,7 @@ async def startup_event():
             print(f"❌ YOLOv8n model failed to load: {yolo_err}")
             raise
         
+        # Load BLIP-2 model
         logger.info("Loading BLIP-2 model...")
         print("🔄 Loading BLIP-2 model...")
         model_kwargs = {}
@@ -197,16 +226,20 @@ async def startup_event():
             print(f"❌ BLIP-2 model failed to load: {blip_err}")
             raise
         
+        # Initialize OCR Reader
         logger.info("Loading OCR reader...")
         print("🔄 Loading OCR reader...")
         try:
+            # Initialize EasyOCR with English support (can add more languages)
             ocr_reader = easyocr.Reader(['en'], gpu=(device.type == 'cuda'))
             print("✅ OCR reader loaded successfully!")
         except Exception as ocr_err:
             print(f"❌ OCR reader failed to load: {ocr_err}")
+            # OCR is optional, so don't raise - just log the error
             logger.warning(f"OCR initialization failed: {ocr_err}")
             ocr_reader = None
         
+        # Initialize OpenAI client
         print("🔄 Loading OpenAI client...")
         openai_api_key = os.getenv("OPENAI_API_KEY")
         if openai_api_key:
@@ -214,6 +247,7 @@ async def startup_event():
                 openai_client = openai.OpenAI(api_key=openai_api_key)
                 print("✅ OpenAI client loaded successfully!")
             except TypeError:
+                # Fallback for older OpenAI client versions
                 openai.api_key = openai_api_key
                 openai_client = openai
                 print("✅ OpenAI client loaded (fallback method)!")
@@ -230,8 +264,9 @@ async def startup_event():
         print(f"❌ STARTUP FAILED: {error_msg}")
         import traceback
         traceback.print_exc()
-        raise
+        raise  # Re-raise to prevent server from starting with failed models
 
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -246,6 +281,7 @@ async def root():
 
 @app.get("/health")
 async def health_check():
+    """Detailed health check"""
     return {
         "status": "healthy",
         "models": {
@@ -258,11 +294,16 @@ async def health_check():
     }
 
 def _focused_description(objects: List[ObjectDetection]) -> str:
+    """Generate concise, navigation-focused description from detected objects.
+    Rules: prioritize people, vehicles, obstacles; mention counts and relative position (left/center/right).
+    Limit to ~110 characters.
+    """
     if not objects:
         return "No clear objects ahead. Path may be open."
 
+    # Map priority groups
     priority_order = [
-        {"person"},
+        {"person"},  # highest
         {"car", "bus", "truck", "motorcycle", "bicycle"},
         {"dog", "cat"},
         {"chair", "bench"},
@@ -273,6 +314,7 @@ def _focused_description(objects: List[ObjectDetection]) -> str:
             return "center"
         x1, _, x2, _ = obj.bbox
         mid = (x1 + x2) / 2.0
+        # Normalize using assumed image width ~640 if not provided
         width = 640.0
         rel = mid / width
         if rel < 0.33:
@@ -281,12 +323,14 @@ def _focused_description(objects: List[ObjectDetection]) -> str:
             return "right"
         return "center"
 
+    # Count objects by name & position
     info: Dict[tuple, int] = {}
     for o in objects:
         pos = horiz_pos(o)
         key = (o.name, pos)
         info[key] = info.get(key, 0) + 1
 
+    # Build sentences by priority
     phrases = []
     used_names = set()
     for group in priority_order:
@@ -295,6 +339,7 @@ def _focused_description(objects: List[ObjectDetection]) -> str:
         ]
         if not group_entries:
             continue
+        # aggregate counts across positions for same name
         name_totals: Dict[str, int] = {}
         for name, pos, cnt in group_entries:
             name_totals[name] = name_totals.get(name, 0) + cnt
@@ -312,6 +357,7 @@ def _focused_description(objects: List[ObjectDetection]) -> str:
             )
             phrases.append(phrase)
             used_names.add(name)
+        # Stop if description getting long
         if len("; ".join(phrases)) > 90:
             break
 
@@ -330,33 +376,43 @@ def _focused_description(objects: List[ObjectDetection]) -> str:
 
 
 def _extract_text_from_image(image_array: np.ndarray) -> str:
+    """Extract text from image using OCR."""
     if ocr_reader is None:
         return ""
     
     try:
+        # EasyOCR expects image in RGB format
         if len(image_array.shape) == 3 and image_array.shape[2] == 3:
+            # Convert BGR to RGB for OCR
             rgb_image = cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB)
         else:
             rgb_image = image_array
         
+        # Extract text using EasyOCR
         results = ocr_reader.readtext(rgb_image)
         
         if not results:
             return ""
         
+        # Extract text content and filter by confidence
         text_segments = []
         for (bbox, text, confidence) in results:
+            # Only include text with reasonable confidence (>0.5)
             if confidence > 0.5 and text.strip():
+                # Clean up the text
                 cleaned_text = text.strip()
-                if len(cleaned_text) > 1:
+                if len(cleaned_text) > 1:  # Skip single characters
                     text_segments.append(cleaned_text)
         
         if not text_segments:
             return ""
         
+        # Join text segments and create a readable description
         extracted_text = " ".join(text_segments)
         
+        # Format the text for accessibility
         if len(extracted_text) > 200:
+            # Truncate very long text
             extracted_text = extracted_text[:200] + "..."
         
         return extracted_text
@@ -368,13 +424,16 @@ def _extract_text_from_image(image_array: np.ndarray) -> str:
 
 def _extract_targets(question: str) -> List[str]:
     q = question.lower()
+    # Simple keyword extraction (could be extended)
     tokens = [t.strip("?.,! ") for t in q.split()]
+    # Filter out stopwords
     stop = {"the","a","an","to","is","are","there","on","at","my","in","for","of","do","i","can","you","me","near"}
     nouns = [t for t in tokens if t and t not in stop and len(t) > 2]
     return list(dict.fromkeys(nouns))[:3]
 
 
 def _estimate_distance(obj: ObjectDetection, img_height: float = 480.0) -> str:
+    """Estimate relative distance based on object size and position."""
     if not obj.bbox or len(obj.bbox) != 4:
         return "unknown"
     
@@ -382,9 +441,11 @@ def _estimate_distance(obj: ObjectDetection, img_height: float = 480.0) -> str:
     height = y2 - y1
     bottom_y = y2
     
+    # Distance heuristics based on object size and vertical position
     rel_height = height / img_height
     rel_bottom = bottom_y / img_height
     
+    # Larger objects lower in frame = closer
     if rel_height > 0.4 and rel_bottom > 0.7:
         return "very close"
     elif rel_height > 0.25 and rel_bottom > 0.6:
@@ -398,31 +459,42 @@ def _estimate_distance(obj: ObjectDetection, img_height: float = 480.0) -> str:
 
 
 def _calculate_precise_position(obj: ObjectDetection, img_width: float = 640.0, img_height: float = 480.0) -> Dict[str, Any]:
+    """Calculate precise position with support for LiDAR distance data."""
     x1, y1, x2, y2 = obj.bbox
     center_x = (x1 + x2) / 2.0
     center_y = (y1 + y2) / 2.0
     width = x2 - x1
     height = y2 - y1
     
-    horizontal_fov_degrees = 68.0
+    # Improved angle calculation with proper camera FOV
+    # Most smartphone cameras have horizontal FOV between 60-75 degrees
+    # iPhone: ~68°, Samsung: ~70°, most Android: ~65-70°
+    horizontal_fov_degrees = 68.0  # More accurate estimate for smartphones
     
+    # Calculate angle offset from center
     img_center_x = img_width / 2.0
     horizontal_offset = center_x - img_center_x
     
+    # Convert pixel offset to angle using proper trigonometry
+    # Maximum offset corresponds to half the FOV
     max_offset_pixels = img_width / 2.0
     angle_offset = (horizontal_offset / max_offset_pixels) * (horizontal_fov_degrees / 2.0)
     
+    # Clamp to realistic range
     angle_offset = max(-45.0, min(45.0, angle_offset))
     
+    # Use LiDAR distance if available, otherwise estimate
     if obj.distance is not None and obj.is_lidar_measured:
         distance = obj.distance
         distance_source = "LiDAR"
-        confidence = 0.95
+        confidence = 0.95  # High confidence for LiDAR measurements
     else:
+        # Fallback to estimation using object size
         distance = _estimate_distance_from_size(obj, width, height, img_height)
         distance_source = "estimated"
-        confidence = 0.7
+        confidence = 0.7  # Improved confidence with better estimation
     
+    # Determine precise position description with better accuracy
     abs_angle = abs(angle_offset)
     if abs_angle < 3:
         position = "directly ahead"
@@ -435,6 +507,7 @@ def _calculate_precise_position(obj: ObjectDetection, img_width: float = 640.0, 
     else:
         position = f"extreme {'left' if angle_offset < 0 else 'right'}"
     
+    # Add vertical position context for better guidance
     img_center_y = img_height / 2.0
     vertical_offset = center_y - img_center_y
     vertical_ratio = vertical_offset / (img_height / 2.0)
@@ -447,7 +520,7 @@ def _calculate_precise_position(obj: ObjectDetection, img_width: float = 640.0, 
         vertical_pos = "at eye level"
     
     return {
-        "angle": round(angle_offset, 1),
+        "angle": round(angle_offset, 1),  # degrees from center (-left, +right)
         "distance_meters": round(distance, 1),
         "distance_source": distance_source,
         "position": position,
@@ -459,110 +532,119 @@ def _calculate_precise_position(obj: ObjectDetection, img_width: float = 640.0, 
     }
 
 def _estimate_distance_from_size(obj: ObjectDetection, width: float, height: float, img_height: float) -> float:
+    """Estimate distance using object size (fallback when LiDAR not available)."""
+    # Real-world object sizes in meters (updated for better accuracy)
     object_real_sizes = {
-        "person": 1.75,
-        "bicycle": 1.8,
-        "car": 4.8,
-        "motorcycle": 2.2,
-        "airplane": 30.0,
-        "bus": 12.0,
-        "train": 150.0,
-        "truck": 8.5,
-        "boat": 8.0,
-        "traffic light": 1.2,
-        "fire hydrant": 0.7,
-        "stop sign": 0.9,
-        "parking meter": 1.3,
-        "bench": 1.8,
-        "bird": 0.2,
-        "cat": 0.45,
-        "dog": 0.7,
-        "horse": 2.8,
-        "sheep": 1.3,
-        "cow": 2.8,
-        "elephant": 6.5,
-        "bear": 2.2,
-        "zebra": 2.7,
-        "giraffe": 5.5,
-        "chair": 0.9,
-        "dining table": 1.5,
-        "couch": 2.0,
-        "potted plant": 0.4,
-        "bed": 2.0,
-        "toilet": 0.7,
-        "tv": 1.0,
-        "laptop": 0.35,
-        "mouse": 0.1,
-        "remote": 0.2,
-        "keyboard": 0.4,
-        "cell phone": 0.15,
+        "person": 1.75,  # average person height
+        "bicycle": 1.8,  # bike length
+        "car": 4.8,      # car length (more accurate average)
+        "motorcycle": 2.2, # motorcycle length
+        "airplane": 30.0,  # small aircraft (reduced from 50m)
+        "bus": 12.0,     # bus length
+        "train": 150.0,  # train car length (reduced)
+        "truck": 8.5,    # truck length
+        "boat": 8.0,     # small boat length
+        "traffic light": 1.2, # traffic light height (more accurate)
+        "fire hydrant": 0.7,  # hydrant height
+        "stop sign": 0.9,     # stop sign height
+        "parking meter": 1.3, # meter height
+        "bench": 1.8,    # bench length (more accurate)
+        "bird": 0.2,     # small bird (slightly larger)
+        "cat": 0.45,     # cat body length
+        "dog": 0.7,      # medium dog body length
+        "horse": 2.8,    # horse length
+        "sheep": 1.3,    # sheep body length
+        "cow": 2.8,      # cow body length
+        "elephant": 6.5, # elephant length
+        "bear": 2.2,     # bear body length
+        "zebra": 2.7,    # zebra body length
+        "giraffe": 5.5,  # giraffe height
+        "chair": 0.9,    # chair height
+        "dining table": 1.5, # table length
+        "couch": 2.0,    # couch length
+        "potted plant": 0.4, # plant pot height
+        "bed": 2.0,      # bed length
+        "toilet": 0.7,   # toilet height
+        "tv": 1.0,       # TV width (modern flat screen)
+        "laptop": 0.35,  # laptop width
+        "mouse": 0.1,    # computer mouse
+        "remote": 0.2,   # TV remote
+        "keyboard": 0.4, # keyboard width
+        "cell phone": 0.15, # phone height
         "microwave": 0.5,   # microwave width
-        "oven": 0.6,
-        "toaster": 0.3,
-        "sink": 0.6,
-        "refrigerator": 1.8,
-        "book": 0.2,
-        "clock": 0.3,
-        "vase": 0.25,
-        "scissors": 0.2,
-        "teddy bear": 0.3,
-        "hair drier": 0.25,
-        "toothbrush": 0.2,
-        "bottle": 0.25,
-        "wine glass": 0.2,
-        "cup": 0.12,
-        "fork": 0.2,
-        "knife": 0.25,
-        "spoon": 0.18,
-        "bowl": 0.15,
-        "banana": 0.2,
-        "apple": 0.08,
-        "sandwich": 0.15,
-        "orange": 0.08,
-        "broccoli": 0.15,
-        "carrot": 0.2,
-        "hot dog": 0.15,
-        "pizza": 0.3,
-        "donut": 0.1,
-        "cake": 0.25,
-        "sports ball": 0.22,
-        "kite": 1.0,
-        "baseball bat": 0.9,
-        "baseball glove": 0.3,
-        "skateboard": 0.8,
-        "surfboard": 2.5,
-        "tennis racket": 0.7,
-        "backpack": 0.5,
-        "umbrella": 1.0,
-        "handbag": 0.4,
-        "tie": 1.5,
-        "suitcase": 0.7,
-        "frisbee": 0.27,
-        "skis": 1.7,
-        "snowboard": 1.5,
+        "oven": 0.6,     # oven width
+        "toaster": 0.3,  # toaster width
+        "sink": 0.6,     # sink width
+        "refrigerator": 1.8, # fridge height
+        "book": 0.2,     # book height
+        "clock": 0.3,    # wall clock diameter
+        "vase": 0.25,    # vase height
+        "scissors": 0.2, # scissors length
+        "teddy bear": 0.3, # teddy bear height
+        "hair drier": 0.25, # hair dryer length
+        "toothbrush": 0.2,  # toothbrush length
+        "bottle": 0.25,  # bottle height
+        "wine glass": 0.2, # wine glass height
+        "cup": 0.12,     # cup height
+        "fork": 0.2,     # fork length
+        "knife": 0.25,   # knife length
+        "spoon": 0.18,   # spoon length
+        "bowl": 0.15,    # bowl diameter
+        "banana": 0.2,   # banana length
+        "apple": 0.08,   # apple diameter
+        "sandwich": 0.15, # sandwich width
+        "orange": 0.08,  # orange diameter
+        "broccoli": 0.15, # broccoli head
+        "carrot": 0.2,   # carrot length
+        "hot dog": 0.15, # hot dog length
+        "pizza": 0.3,    # pizza slice
+        "donut": 0.1,    # donut diameter
+        "cake": 0.25,    # cake slice
+        "sports ball": 0.22, # soccer ball diameter
+        "kite": 1.0,     # kite wingspan
+        "baseball bat": 0.9, # bat length
+        "baseball glove": 0.3, # glove length
+        "skateboard": 0.8,   # skateboard length
+        "surfboard": 2.5,    # surfboard length
+        "tennis racket": 0.7, # racket length
+        "backpack": 0.5,     # backpack height
+        "umbrella": 1.0,     # umbrella diameter
+        "handbag": 0.4,      # handbag width
+        "tie": 1.5,          # necktie length
+        "suitcase": 0.7,     # suitcase height
+        "frisbee": 0.27,     # frisbee diameter
+        "skis": 1.7,         # skis length
+        "snowboard": 1.5,    # snowboard length
     }
     
-    real_size = object_real_sizes.get(obj.name.lower(), 1.0)
+    # Get expected real-world size for the object
+    real_size = object_real_sizes.get(obj.name.lower(), 1.0)  # default 1 meter
     
-    focal_length_approx = img_height * 0.8
+    # Improved camera model using more accurate focal length estimation
+    # For typical smartphone cameras: focal_length ≈ img_height * 0.7 to 1.2
+    # Using a more conservative estimate for better accuracy
+    focal_length_approx = img_height * 0.8  # More realistic focal length
     
     # Distance calculation using similar triangles principle
+    # distance = (real_world_size * focal_length) / object_size_in_pixels
     estimated_distance = (real_size * focal_length_approx) / height
     
+    # Apply realistic bounds and smooth the estimates
     if estimated_distance < 0.3:
-        estimated_distance = 0.3
+        estimated_distance = 0.3  # Minimum 30cm
     elif estimated_distance > 50.0:
-        estimated_distance = 50.0
+        estimated_distance = 50.0  # Maximum 50m for better accuracy
     
+    # Apply object-specific corrections for better accuracy
     object_corrections = {
-        "person": 0.9,
-        "car": 1.1,
-        "bicycle": 0.9,
-        "chair": 0.8,
+        "person": 0.9,      # People estimates tend to be too far
+        "car": 1.1,         # Cars tend to be estimated too close
+        "bicycle": 0.9,     # Bicycles tend to be too far
+        "chair": 0.8,       # Furniture tends to be estimated too far
         "dining table": 0.8,
         "couch": 0.8,
-        "tv": 1.2,
-        "cell phone": 0.7,
+        "tv": 1.2,          # TVs tend to be estimated too close
+        "cell phone": 0.7,  # Small objects tend to be too far
         "laptop": 0.8,
         "bottle": 0.7,
         "cup": 0.6,
@@ -574,6 +656,7 @@ def _estimate_distance_from_size(obj: ObjectDetection, width: float, height: flo
     return round(estimated_distance, 1)
 
 def _calculate_precise_position_legacy(obj: ObjectDetection, img_width: float = 640.0, img_height: float = 480.0) -> Dict[str, Any]:
+    """Calculate precise position and angle for navigation."""
     if not obj.bbox or len(obj.bbox) != 4:
         return {"angle": 0, "distance_meters": 0, "position": "unknown", "coordinates": [0, 0]}
     
@@ -583,13 +666,16 @@ def _calculate_precise_position_legacy(obj: ObjectDetection, img_width: float = 
     width = x2 - x1
     height = y2 - y1
     
+    # Calculate angle from center of frame
     frame_center_x = img_width / 2.0
     frame_center_y = img_height / 2.0
     
-    horizontal_fov = 60.0
+    # Horizontal angle calculation (assuming 60-70 degree FOV for typical phone camera)
+    horizontal_fov = 60.0  # degrees
     pixels_per_degree = img_width / horizontal_fov
     angle_offset = (center_x - frame_center_x) / pixels_per_degree
     
+    # Distance estimation in meters (rough approximation based on object type and size)
     object_real_sizes = {
         "person": 1.7,  # average human height in meters
         "car": 4.5,     # average car length
@@ -597,50 +683,56 @@ def _calculate_precise_position_legacy(obj: ObjectDetection, img_width: float = 
         "table": 0.75,  # average table height
         "door": 2.0,    # average door height
         "laptop": 0.35, # laptop width
-        "cell phone": 0.15,
-        "bottle": 0.25,
-        "cup": 0.1,
-        "book": 0.25,
-        "clock": 0.3,
-        "tv": 1.0,
-        "refrigerator": 1.8,
-        "microwave": 0.5,
-        "oven": 0.6,
-        "sink": 0.6,
-        "toilet": 0.7,
-        "bed": 2.0,
-        "dining table": 1.5,
-        "sofa": 2.0,
-        "potted plant": 0.5,
-        "bicycle": 1.7,
-        "motorcycle": 2.0,
-        "airplane": 50.0,
-        "bus": 12.0,
-        "train": 25.0,
-        "truck": 8.0,
-        "boat": 6.0,
-        "stop sign": 0.8,
-        "parking meter": 1.2,
-        "bench": 1.5,
-        "bird": 0.15,
-        "cat": 0.4,
-        "dog": 0.6,
-        "horse": 2.5,
-        "sheep": 1.5,
-        "cow": 2.5,
-        "elephant": 6.0,
-        "bear": 2.0,
-        "zebra": 2.5,
-        "giraffe": 5.0,
+        "cell phone": 0.15, # phone height
+        "bottle": 0.25, # bottle height
+        "cup": 0.1,     # cup height
+        "book": 0.25,   # book height
+        "clock": 0.3,   # wall clock diameter
+        "tv": 1.0,      # TV width (medium size)
+        "refrigerator": 1.8, # fridge height
+        "microwave": 0.5,    # microwave width
+        "oven": 0.6,    # oven width
+        "sink": 0.6,    # sink width
+        "toilet": 0.7,  # toilet height
+        "bed": 2.0,     # bed length
+        "dining table": 1.5, # table length
+        "sofa": 2.0,    # sofa length
+        "potted plant": 0.5, # plant height
+        "bicycle": 1.7, # bike length
+        "motorcycle": 2.0, # bike length
+        "airplane": 50.0,   # large plane
+        "bus": 12.0,    # bus length
+        "train": 25.0,  # train car length
+        "truck": 8.0,   # truck length
+        "boat": 6.0,    # small boat length
+        "stop sign": 0.8, # stop sign height
+        "parking meter": 1.2, # meter height
+        "bench": 1.5,   # bench length
+        "bird": 0.15,   # small bird
+        "cat": 0.4,     # cat body length
+        "dog": 0.6,     # medium dog body length
+        "horse": 2.5,   # horse length
+        "sheep": 1.5,   # sheep body length
+        "cow": 2.5,     # cow body length
+        "elephant": 6.0, # elephant length
+        "bear": 2.0,    # bear body length
+        "zebra": 2.5,   # zebra body length
+        "giraffe": 5.0, # giraffe height
     }
     
-    real_size = object_real_sizes.get(obj.name.lower(), 1.0)
+    # Get expected real-world size for the object
+    real_size = object_real_sizes.get(obj.name.lower(), 1.0)  # default 1 meter
     
+    # Estimate distance using object height in pixels vs expected real height
+    # This is a simplified camera model: distance = (real_height * focal_length) / pixel_height
+    # Using approximation: focal_length ≈ img_height for typical phone cameras
     focal_length_approx = img_height
     estimated_distance = (real_size * focal_length_approx) / height
     
-    estimated_distance = max(0.5, min(estimated_distance, 100.0))
+    # Apply some bounds to make estimates more reasonable
+    estimated_distance = max(0.5, min(estimated_distance, 100.0))  # between 0.5m and 100m
     
+    # Determine precise position description
     if abs(angle_offset) < 5:
         position = "directly ahead"
     elif abs(angle_offset) < 15:
@@ -653,7 +745,7 @@ def _calculate_precise_position_legacy(obj: ObjectDetection, img_width: float = 
         position = f"extreme {'left' if angle_offset < 0 else 'right'}"
     
     return {
-        "angle": round(angle_offset, 1),
+        "angle": round(angle_offset, 1),  # degrees from center (-left, +right)
         "distance_meters": round(estimated_distance, 1),
         "position": position,
         "coordinates": [round(center_x), round(center_y)],
@@ -663,8 +755,11 @@ def _calculate_precise_position_legacy(obj: ObjectDetection, img_width: float = 
 
 
 def _direction_for_targets(target_objs: List[ObjectDetection], width: float = 640.0, height: float = 480.0) -> Dict[str, Any]:
+    """Enhanced direction calculation with precise positioning and navigation guidance."""
     if not target_objs:
         return {"direction": "unknown", "distance": "unknown", "confidence": 0.0, "navigation": {}}
+    
+    # Calculate precise positions for all target objects
     positions = []
     for obj in target_objs:
         pos_data = _calculate_precise_position(obj, width, height)
@@ -1772,12 +1867,15 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     host = os.getenv("HOST", "0.0.0.0")
     
+    # Get the current local IP address automatically
+    local_ip = get_local_ip()
+    
     print(f"\n🚀 Starting Vision Mate Backend Server...")
     print(f"📍 Local access: http://127.0.0.1:{port}")
-    print(f"📍 Network access: http://10.123.74.126:{port}")
-    print(f"📍 Health check: http://10.123.74.126:{port}/health")
+    print(f"📍 Network access: http://{local_ip}:{port}")
+    print(f"📍 Health check: http://{local_ip}:{port}/health")
     print("🔧 Make sure your phone and laptop are on the same WiFi!")
-    print("📱 Flutter app configured for: http://10.123.74.126:8000")
+    print(f"📱 Flutter app should be configured for: http://{local_ip}:{port}")
     print("=" * 65)
     
     uvicorn.run(app, host=host, port=port)
