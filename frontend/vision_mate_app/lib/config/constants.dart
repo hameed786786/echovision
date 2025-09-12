@@ -2,7 +2,7 @@ class ApiConfig {
   // IMPORTANT: Choose the correct URL based on your device:
   // For physical Android/iOS device on same WiFi network:
   static const String baseUrl =
-      'http://192.168.137.227:8000'; // Your current laptop IP (updated)
+      'http://10.123.74.126:8000'; // Your current laptop IP (updated)
 
   // For Android emulator:
   // static const String baseUrl = 'http://10.0.2.2:8000';
@@ -15,8 +15,8 @@ class ApiConfig {
 
   // Fallback URLs to try if primary fails (updated with current IP)
   static const List<String> fallbackUrls = [
-    'http://192.168.137.227:8000', // Current WiFi IP (updated)
-    'http://10.123.74.126:8000', // Previous WiFi IP
+    'http://10.123.74.126:8000', // Current WiFi IP (updated)
+    'http://192.168.137.227:8000', // Previous WiFi IP
     'http://10.227.99.126:8000', // Previous WiFi IP
     'http://10.76.115.126:8000', // Previous WiFi IP
     'http://172.17.16.212:8000', // Previous WiFi IP
