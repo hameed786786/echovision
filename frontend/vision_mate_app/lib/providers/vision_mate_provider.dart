@@ -1,11 +1,11 @@
 import 'package:flutter/foundation.dart';
 import 'dart:typed_data';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:permission_handler/permission_handler.dart';
 import '../models/api_models.dart';
 import '../services/api_service.dart';
 import '../services/audio_service.dart';
 import '../services/camera_service.dart';
+import '../services/enhanced_camera_service.dart';
 import '../services/haptic_service.dart';
 import '../services/guidance_service.dart';
 import '../config/constants.dart';
@@ -18,6 +18,8 @@ class VisionMateProvider extends ChangeNotifier {
   String _lastSceneDescription = '';
   String _lastAnswer = '';
   bool _isConnected = false;
+  bool _lidarAvailable = false;
+  Map<String, dynamic> _deviceCapabilities = {};
   final GuidanceService _guidanceService = GuidanceService();
   GuidanceUpdate? _lastGuidance;
 
@@ -27,6 +29,8 @@ class VisionMateProvider extends ChangeNotifier {
   String get lastSceneDescription => _lastSceneDescription;
   String get lastAnswer => _lastAnswer;
   bool get isConnected => _isConnected;
+  bool get lidarAvailable => _lidarAvailable;
+  Map<String, dynamic> get deviceCapabilities => _deviceCapabilities;
   bool get guidanceRunning => _guidanceService.isRunning;
   GuidanceUpdate? get lastGuidance => _lastGuidance;
 
@@ -42,11 +46,20 @@ class VisionMateProvider extends ChangeNotifier {
       bool cameraInitialized = await CameraService.initialize();
       if (!cameraInitialized) {
         print('VisionMateProvider: Camera initialization failed');
-        await AudioService.speakImportant(
-          'Camera permission required. Please enable camera access.',
-        );
         return;
       }
+
+      // Initialize enhanced camera service with LiDAR support
+      print('VisionMateProvider: Initializing Enhanced Camera Service...');
+      bool enhancedCameraReady = await EnhancedCameraService.initialize();
+      _lidarAvailable = EnhancedCameraService.hasLiDAR;
+      
+      // Get detailed capabilities
+      _deviceCapabilities = await EnhancedCameraService.getCapabilities();
+      
+      print('VisionMateProvider: Enhanced camera ready: $enhancedCameraReady');
+      print('VisionMateProvider: LiDAR available: $_lidarAvailable');
+      print('VisionMateProvider: Device capabilities: $_deviceCapabilities');
 
       // Check API connection with detailed logging
       print('VisionMateProvider: Checking API connection...');

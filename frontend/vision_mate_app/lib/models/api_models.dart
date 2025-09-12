@@ -5,6 +5,10 @@ class ObjectDetection {
   final int y;
   final int w;
   final int h;
+  final double? distance; // Distance in meters (null if not available)
+  final bool isLiDARMeasured; // Whether distance was measured using LiDAR
+  final String? position; // Position description (e.g., "center", "left")
+  final double? angle; // Angle from center in degrees
 
   ObjectDetection({
     required this.name,
@@ -13,6 +17,10 @@ class ObjectDetection {
     required this.y,
     required this.w,
     required this.h,
+    this.distance,
+    this.isLiDARMeasured = false,
+    this.position,
+    this.angle,
   });
 
   factory ObjectDetection.fromJson(Map<String, dynamic> json) {
@@ -23,6 +31,10 @@ class ObjectDetection {
       y: (json['y'] ?? 0).toInt(),
       w: (json['w'] ?? 0).toInt(),
       h: (json['h'] ?? 0).toInt(),
+      distance: json['distance']?.toDouble(),
+      isLiDARMeasured: json['is_lidar_measured'] ?? false,
+      position: json['position'],
+      angle: json['angle']?.toDouble(),
     );
   }
 
@@ -34,12 +46,48 @@ class ObjectDetection {
       'y': y,
       'w': w,
       'h': h,
+      if (distance != null) 'distance': distance,
+      'is_lidar_measured': isLiDARMeasured,
+      if (position != null) 'position': position,
+      if (angle != null) 'angle': angle,
     };
   }
 
   @override
   String toString() {
-    return '$name (${(confidence * 100).toStringAsFixed(0)}%)';
+    String result = '$name (${(confidence * 100).toStringAsFixed(0)}%)';
+    if (distance != null) {
+      String source = isLiDARMeasured ? 'LiDAR' : 'estimated';
+      result += ' at ${distance!.toStringAsFixed(1)}m ($source)';
+    }
+    if (position != null) {
+      result += ' - $position';
+    }
+    return result;
+  }
+
+  /// Get a detailed description including distance and position
+  String getDetailedDescription() {
+    List<String> parts = [name];
+    
+    if (distance != null) {
+      String distanceStr = distance! < 1.0 
+        ? '${(distance! * 100).toStringAsFixed(0)} centimeters'
+        : '${distance!.toStringAsFixed(1)} meters';
+      String source = isLiDARMeasured ? 'precisely measured' : 'estimated';
+      parts.add('$distanceStr away ($source)');
+    }
+    
+    if (position != null) {
+      parts.add('positioned $position');
+    }
+    
+    if (angle != null) {
+      String direction = angle! > 0 ? 'right' : 'left';
+      parts.add('${angle!.abs().toStringAsFixed(0)} degrees to the $direction');
+    }
+    
+    return parts.join(', ');
   }
 }
 

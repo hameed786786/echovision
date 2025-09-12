@@ -55,6 +55,11 @@ class ObjectDetection(BaseModel):
     y: Optional[float] = None
     w: Optional[float] = None
     h: Optional[float] = None
+    # Enhanced fields for LiDAR and positioning
+    distance: Optional[float] = None  # Distance in meters
+    is_lidar_measured: bool = False  # Whether distance was measured using LiDAR
+    position: Optional[str] = None  # Position description (e.g., "center left")
+    angle: Optional[float] = None  # Angle from center in degrees
 
     @root_validator(pre=True)
     def ensure_bbox(cls, values):  # type: ignore
@@ -76,7 +81,7 @@ class ObjectDetection(BaseModel):
         return values
 
     def to_client_dict(self) -> dict:
-        """Return dict shape expected by Flutter (x,y,w,h)."""
+        """Return dict shape expected by Flutter (x,y,w,h) with enhanced data."""
         if self.bbox and len(self.bbox) == 4:
             x1, y1, x2, y2 = self.bbox
             x = int(x1)
@@ -89,7 +94,8 @@ class ObjectDetection(BaseModel):
             y = int(self.y or 0)
             w = int(self.w or 0)
             h = int(self.h or 0)
-        return {
+            
+        result = {
             "name": self.name,
             "confidence": float(self.confidence),
             "x": x,
@@ -97,6 +103,19 @@ class ObjectDetection(BaseModel):
             "w": w,
             "h": h,
         }
+        
+        # Add enhanced data if available
+        if self.distance is not None:
+            result["distance"] = float(self.distance)
+            result["is_lidar_measured"] = self.is_lidar_measured
+            
+        if self.position is not None:
+            result["position"] = self.position
+            
+        if self.angle is not None:
+            result["angle"] = float(self.angle)
+            
+        return result
 
 
 class QuestionRequest(BaseModel):
@@ -428,6 +447,97 @@ def _estimate_distance(obj: ObjectDetection, img_height: float = 480.0) -> str:
 
 
 def _calculate_precise_position(obj: ObjectDetection, img_width: float = 640.0, img_height: float = 480.0) -> Dict[str, Any]:
+    """Calculate precise position with support for LiDAR distance data."""
+    x1, y1, x2, y2 = obj.bbox
+    center_x = (x1 + x2) / 2.0
+    center_y = (y1 + y2) / 2.0
+    width = x2 - x1
+    height = y2 - y1
+    
+    # Calculate angle offset from center (-90 to +90 degrees)
+    # Negative = left, Positive = right
+    img_center_x = img_width / 2.0
+    horizontal_offset = center_x - img_center_x
+    angle_offset = (horizontal_offset / img_center_x) * 45.0  # Assumes ~90 degree FOV
+    
+    # Use LiDAR distance if available, otherwise estimate
+    if obj.distance is not None and obj.is_lidar_measured:
+        distance = obj.distance
+        distance_source = "LiDAR"
+        confidence = 0.95  # High confidence for LiDAR measurements
+    else:
+        # Fallback to estimation using object size
+        distance = _estimate_distance_from_size(obj, width, height, img_height)
+        distance_source = "estimated"
+        confidence = 0.6  # Lower confidence for estimates
+    
+    # Determine precise position description
+    if abs(angle_offset) < 5:
+        position = "directly ahead"
+    elif abs(angle_offset) < 15:
+        position = f"slightly {'left' if angle_offset < 0 else 'right'}"
+    elif abs(angle_offset) < 30:
+        position = f"{'left' if angle_offset < 0 else 'right'}"
+    elif abs(angle_offset) < 45:
+        position = f"far {'left' if angle_offset < 0 else 'right'}"
+    else:
+        position = f"extreme {'left' if angle_offset < 0 else 'right'}"
+    
+    return {
+        "angle": round(angle_offset, 1),  # degrees from center (-left, +right)
+        "distance_meters": round(distance, 1),
+        "distance_source": distance_source,
+        "position": position,
+        "coordinates": [round(center_x), round(center_y)],
+        "size_pixels": [round(width), round(height)],
+        "confidence": confidence
+    }
+
+def _estimate_distance_from_size(obj: ObjectDetection, width: float, height: float, img_height: float) -> float:
+    """Estimate distance using object size (fallback when LiDAR not available)."""
+    # Real-world object sizes in meters (approximate)
+    object_real_sizes = {
+        "person": 1.7,  # average person height
+        "bicycle": 1.8, # bike length
+        "car": 4.5,     # car length
+        "motorcycle": 2.2, # motorcycle length
+        "airplane": 50.0,  # small aircraft
+        "bus": 12.0,    # bus length
+        "train": 200.0, # train car length
+        "truck": 8.0,   # truck length
+        "boat": 8.0,    # small boat length
+        "traffic light": 1.0, # traffic light height
+        "fire hydrant": 0.6,  # hydrant height
+        "stop sign": 0.8,     # stop sign height
+        "parking meter": 1.2, # meter height
+        "bench": 1.5,   # bench length
+        "bird": 0.15,   # small bird
+        "cat": 0.4,     # cat body length
+        "dog": 0.6,     # medium dog body length
+        "horse": 2.5,   # horse length
+        "sheep": 1.5,   # sheep body length
+        "cow": 2.5,     # cow body length
+        "elephant": 6.0, # elephant length
+        "bear": 2.0,    # bear body length
+        "zebra": 2.5,   # zebra body length
+        "giraffe": 5.0, # giraffe height
+    }
+    
+    # Get expected real-world size for the object
+    real_size = object_real_sizes.get(obj.name.lower(), 1.0)  # default 1 meter
+    
+    # Estimate distance using object height in pixels vs expected real height
+    # This is a simplified camera model: distance = (real_height * focal_length) / pixel_height
+    # Using approximation: focal_length ≈ img_height for typical phone cameras
+    focal_length_approx = img_height
+    estimated_distance = (real_size * focal_length_approx) / height
+    
+    # Apply some bounds to make estimates more reasonable
+    estimated_distance = max(0.5, min(estimated_distance, 100.0))  # between 0.5m and 100m
+    
+    return estimated_distance
+
+def _calculate_precise_position_legacy(obj: ObjectDetection, img_width: float = 640.0, img_height: float = 480.0) -> Dict[str, Any]:
     """Calculate precise position and angle for navigation."""
     if not obj.bbox or len(obj.bbox) != 4:
         return {"angle": 0, "distance_meters": 0, "position": "unknown", "coordinates": [0, 0]}
