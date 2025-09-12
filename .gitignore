@@ -1,0 +1,63 @@
+# Environment variables (contains API keys)
+.env
+backend/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.venv/
+venv/
+ENV/
+env/
+
+# AI Models (large files)
+*.pt
+*.bin
+*.safetensors
+
+# Flutter
+frontend/vision_mate_app/build/
+frontend/vision_mate_app/.dart_tool/
+frontend/vision_mate_app/.flutter-plugins
+frontend/vision_mate_app/.flutter-plugins-dependencies
+frontend/vision_mate_app/.packages
+frontend/vision_mate_app/pubspec.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp

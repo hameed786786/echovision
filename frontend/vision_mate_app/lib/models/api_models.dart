@@ -103,8 +103,13 @@ class AnswerResponse {
 class AnalyzeResponse {
   final List<ObjectDetection> objects;
   final String sceneDescription;
+  final String? extractedText;
 
-  AnalyzeResponse({required this.objects, required this.sceneDescription});
+  AnalyzeResponse({
+    required this.objects, 
+    required this.sceneDescription,
+    this.extractedText,
+  });
 
   factory AnalyzeResponse.fromJson(Map<String, dynamic> json) {
     var objectsList = json['objects'] as List? ?? [];
@@ -115,6 +120,7 @@ class AnalyzeResponse {
     return AnalyzeResponse(
       objects: objects,
       sceneDescription: json['scene_description'] ?? 'No description available',
+      extractedText: json['extracted_text'],
     );
   }
 }

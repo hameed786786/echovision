@@ -140,6 +140,7 @@ class VisionMateProvider extends ChangeNotifier {
       String detailedDescription = _createDetailedDescription(
         response.sceneDescription,
         response.objects,
+        response.extractedText,
       );
 
       print('VisionMateProvider: Speaking description: $detailedDescription');
@@ -428,6 +429,7 @@ class VisionMateProvider extends ChangeNotifier {
   String _createDetailedDescription(
     String baseDescription,
     List<ObjectDetection> objects,
+    String? extractedText,
   ) {
     List<String> safetyAlerts = [];
     List<String> objectList = [];
@@ -468,6 +470,11 @@ class VisionMateProvider extends ChangeNotifier {
 
     if (safetyAlerts.isNotEmpty) {
       result += ' Safety alerts: ${safetyAlerts.take(3).join(' ')}.';
+    }
+
+    // Add extracted text if available
+    if (extractedText != null && extractedText.trim().isNotEmpty) {
+      result += ' Text detected: $extractedText.';
     }
 
     return result;

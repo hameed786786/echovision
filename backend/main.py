@@ -1216,7 +1216,16 @@ async def real_time_guidance(file: UploadFile = File(...), question: str = Form(
                         except Exception:
                             continue
 
+        # Extract text for navigation context
+        extracted_text = _extract_text_from_image(img_array)
+
         focused = _focused_description(objects)
+        
+        # Enhance scene description with text if available
+        if extracted_text:
+            focused_with_text = f"{focused}. Text visible: {extracted_text}"
+        else:
+            focused_with_text = focused
         
         # Use enhanced guidance computation with precise positioning
         guidance = _compute_guidance(objects, question, img_width, img_height)
@@ -1228,10 +1237,18 @@ async def real_time_guidance(file: UploadFile = File(...), question: str = Form(
             "distance": guidance["distance"],
             "confidence": float(guidance["confidence"]),
             "instruction": guidance["instruction"],
-            "scene_description": focused,
+            "scene_description": focused_with_text,
             "objects": objects,
             "obstacles": [ObstacleInfo(**o) for o in guidance.get("obstacles", [])],
         }
+        
+        # Add text-specific guidance if user is looking for text
+        if extracted_text and any(word in question.lower() for word in ['text', 'sign', 'read', 'writing', 'label', 'number']):
+            response_data["instruction"] = f"Text detected: {extracted_text}. {guidance['instruction']}"
+        
+        # Add extracted text to response
+        if extracted_text:
+            response_data["extracted_text"] = extracted_text
         
         # Add navigation data if available
         if guidance.get("navigation_data"):
@@ -1263,10 +1280,19 @@ async def question_answering(request: QuestionRequest):
         high_conf_objects = [o for o in objs if o.confidence > 0.5]
         objects_text = ", ".join([o.name for o in high_conf_objects[:5]])
         scene_snip = (request.scene_description or "").strip()[:120]
+        
+        # Include extracted text if available in the scene description
+        extracted_text = getattr(request, 'extracted_text', '') or ""
 
         prompt = (
             f"Scene summary: {scene_snip if scene_snip else 'No summary available'}\n"
             f"Key objects: {objects_text if objects_text else 'none'}\n"
+        )
+        
+        if extracted_text:
+            prompt += f"Text visible in scene: {extracted_text}\n"
+            
+        prompt += (
             f"Question: {request.question}\n\n"
             "Provide a concise actionable answer (<=2 short sentences) for a blind user. Avoid percentages."
         )
@@ -1274,10 +1300,10 @@ async def question_answering(request: QuestionRequest):
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You help visually impaired users. Give brief, clear answers."},
+                {"role": "system", "content": "You help visually impaired users. Give brief, clear answers. If asked about text, read it exactly as shown."},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=60,
+            max_tokens=80,
             temperature=0.1,
             top_p=0.9,
         )
