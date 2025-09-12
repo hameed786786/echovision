@@ -15,6 +15,29 @@ class AudioService {
   static bool _isProcessingQueue = false;
   static Completer<void>? _currentSpeechCompleter;
 
+  // Test method to check speech recognition status
+  static Future<bool> testSpeechRecognition() async {
+    try {
+      bool available = await _speech.initialize(
+        debugLogging: true,
+        onError: (error) {
+          print('🔍 Speech Test Error: ${error.errorMsg}');
+          print('🔍 Permanent: ${error.permanent}');
+        },
+      );
+      
+      print('🔍 Speech Test Available: $available');
+      print('🔍 Has Permission: ${await _speech.hasPermission}');
+      print('🔍 Is Available: ${_speech.isAvailable}');
+      print('🔍 Is Listening: ${_speech.isListening}');
+      
+      return available;
+    } catch (e) {
+      print('🔍 Speech Test Exception: $e');
+      return false;
+    }
+  }
+
   static Future<void> initialize() async {
     if (_isInitialized) return;
 
@@ -236,13 +259,21 @@ class AudioService {
 
       // Force reinitialize the speech recognizer completely
       print('AudioService: Reinitializing speech recognizer...');
+      
+      // First run a speech test to validate functionality
+      print('🧪 Running speech recognition test...');
+      bool testResult = await testSpeechRecognition();
+      if (!testResult) {
+        print('❌ Speech recognition test failed - device may not support speech recognition');
+      }
+      
       bool available = await _speech.initialize(
         onStatus: (status) {
           print('AudioService: STT Status: $status');
           if (status == 'listening') {
-            print('🎙️ LISTENING NOW - SPEAK CLEARLY!');
+            print('🎙️ Microphone is active - ready for speech');
           } else if (status == 'notListening') {
-            print('🔇 Not listening anymore');
+            print('🔇 Speech recognition stopped');
           } else if (status == 'done') {
             print('✅ Speech recognition session completed');
           }
@@ -250,16 +281,34 @@ class AudioService {
         onError: (error) {
           print('AudioService: STT Error: ${error.errorMsg}');
           print('AudioService: Error permanent: ${error.permanent}');
+          if (error.errorMsg == 'error_no_match') {
+            print('! No speech detected - make sure to speak clearly');
+          } else if (error.errorMsg == 'error_speech_timeout') {
+            print('! Speech timeout - try speaking sooner');
+          } else if (error.errorMsg == 'error_audio') {
+            print('! Audio error - check microphone permissions');
+          }
         },
+        debugLogging: true,
       );
 
       if (!available) {
         print('❌ Speech recognition not available');
+        print('💡 Checking microphone permissions...');
+        
+        // Try to check permissions
+        bool hasPermission = await _speech.hasPermission;
+        if (!hasPermission) {
+          print('❌ Microphone permission denied');
+          print('💡 Please grant microphone permission in device settings');
+        } else {
+          print('✅ Microphone permission granted');
+          print('❌ Speech recognition service unavailable');
+        }
         return null;
       }
 
-      // Extended wait for initialization to complete properly
-      await Future.delayed(const Duration(milliseconds: 1200)); // Even longer wait
+      print('✅ Speech recognition initialized successfully');
 
       // Double-check that speech recognition is ready
       if (!_speech.isAvailable) {
@@ -277,9 +326,9 @@ class AudioService {
       print('Speak clearly now!\n');
 
       // Add a small delay before actually starting to listen
-      await Future.delayed(const Duration(milliseconds: 300));
+      await Future.delayed(const Duration(milliseconds: 500)); // Increased delay
 
-      // Simple listen call with minimal parameters
+      // Simple listen call with improved parameters for better recognition
       await _speech.listen(
         onResult: (result) {
           print('🎤 Result: "${result.recognizedWords}"');
@@ -298,9 +347,16 @@ class AudioService {
           }
         },
         listenFor: timeout ?? const Duration(seconds: 30), // Total listening time
-        pauseFor: const Duration(seconds: 6), // Wait for silence
+        pauseFor: const Duration(seconds: 3), // Reduced pause - too long might cause timeout
         partialResults: true,
         cancelOnError: false,
+        localeId: 'en_US', // Explicit locale
+        onSoundLevelChange: (level) {
+          // Log sound levels to help debug microphone issues
+          if (level > 0.1) {
+            print('🔊 Sound detected: level ${level.toStringAsFixed(2)}');
+          }
+        },
       );
 
       // Wait for completion or timeout
@@ -335,7 +391,12 @@ class AudioService {
         return cleanResult;
       } else {
         print('❌ NO SPEECH DETECTED');
-        print('💡 Try speaking louder and clearer');
+        print('💡 Troubleshooting tips:');
+        print('   - Speak louder and more clearly');
+        print('   - Get closer to the device microphone');
+        print('   - Try speaking immediately after the beep');
+        print('   - Check if microphone permissions are granted');
+        print('   - Ensure you\'re in a quiet environment');
         return null;
       }
 

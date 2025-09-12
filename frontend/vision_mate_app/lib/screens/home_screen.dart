@@ -4,6 +4,7 @@ import 'package:camera/camera.dart';
 import 'dart:async';
 import '../providers/vision_mate_provider.dart';
 import '../services/camera_service.dart';
+import '../services/audio_service.dart';
 import '../config/constants.dart';
 import '../models/api_models.dart';
 import '../widgets/bbox_overlay.dart';
@@ -85,6 +86,21 @@ class _VisionMateHomePageState extends State<VisionMateHomePage> {
 
                   // Status indicator
                   _buildStatusIndicator(provider),
+                  
+                  // Debug button for speech recognition testing
+                  Positioned(
+                    bottom: 20,
+                    left: 20,
+                    child: ElevatedButton(
+                      onPressed: () => _testSpeechRecognition(context),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      ),
+                      child: Text('Test Speech', style: TextStyle(fontSize: 12)),
+                    ),
+                  ),
                 ],
               );
             },
@@ -412,6 +428,27 @@ class _VisionMateHomePageState extends State<VisionMateHomePage> {
         ),
       ),
     );
+  }
+
+  void _testSpeechRecognition(BuildContext context) async {
+    try {
+      print('🧪 Starting speech recognition test...');
+      context.read<VisionMateProvider>().announceCurrentAction('Testing speech recognition...');
+      
+      // Run the test
+      bool result = await AudioService.testSpeechRecognition();
+      
+      String message = result 
+        ? 'Speech recognition test passed! Your device supports voice input.'
+        : 'Speech recognition test failed. Check microphone permissions.';
+        
+      context.read<VisionMateProvider>().announceCurrentAction(message);
+      print('🧪 Test result: $result');
+      
+    } catch (e) {
+      print('🧪 Test error: $e');
+      context.read<VisionMateProvider>().announceCurrentAction('Speech test failed with error: $e');
+    }
   }
 
   void _handleTap(BuildContext context) {
