@@ -216,15 +216,26 @@ class AudioService {
     }
 
     try {
-      // Completely reinitialize speech recognition each time for reliability
-      print('AudioService: Fresh speech recognition initialization...');
+      // Force complete cleanup and reinitialize speech recognition
+      print('AudioService: Performing complete speech recognition reset...');
       
-      // Stop any existing session
-      if (_speech.isListening) {
-        await _speech.stop();
+      // Force stop TTS to avoid conflicts with STT
+      if (_isSpeaking || _isProcessingQueue || _speechQueue.isNotEmpty) {
+        print('AudioService: Force stopping TTS before STT...');
+        await stopImmediate();
+        _speechQueue.clear();
         await Future.delayed(const Duration(milliseconds: 500));
       }
+      
+      // Stop any existing speech recognition session with extended wait
+      if (_speech.isListening) {
+        print('AudioService: Stopping existing listening session...');
+        await _speech.stop();
+        await Future.delayed(const Duration(milliseconds: 1000)); // Longer wait
+      }
 
+      // Force reinitialize the speech recognizer completely
+      print('AudioService: Reinitializing speech recognizer...');
       bool available = await _speech.initialize(
         onStatus: (status) {
           print('AudioService: STT Status: $status');
@@ -247,17 +258,26 @@ class AudioService {
         return null;
       }
 
-      // Wait a moment for initialization
-      await Future.delayed(const Duration(milliseconds: 300));
+      // Extended wait for initialization to complete properly
+      await Future.delayed(const Duration(milliseconds: 1200)); // Even longer wait
+
+      // Double-check that speech recognition is ready
+      if (!_speech.isAvailable) {
+        print('❌ Speech recognition still not available after initialization');
+        return null;
+      }
 
       String? finalResult;
       bool sessionComplete = false;
       Completer<void> listeningCompleter = Completer<void>();
 
-      print('\n🎙️ STARTING SIMPLE SPEECH RECOGNITION 🎙️');
-      print('You have 30 seconds to ask your question...');
+      print('\n🎙️ STARTING FRESH SPEECH RECOGNITION SESSION 🎙️');
+      print('You have ${timeout?.inSeconds ?? 30} seconds to speak...');
       print('The app will wait 6 seconds after you stop speaking...');
       print('Speak clearly now!\n');
+
+      // Add a small delay before actually starting to listen
+      await Future.delayed(const Duration(milliseconds: 300));
 
       // Simple listen call with minimal parameters
       await _speech.listen(
@@ -277,8 +297,8 @@ class AudioService {
             finalResult = result.recognizedWords;
           }
         },
-        listenFor: timeout ?? const Duration(seconds: 30), // Increased total listening time
-        pauseFor: const Duration(seconds: 6), // Increased pause tolerance - wait longer for silence
+        listenFor: timeout ?? const Duration(seconds: 30), // Total listening time
+        pauseFor: const Duration(seconds: 6), // Wait for silence
         partialResults: true,
         cancelOnError: false,
       );
@@ -286,7 +306,7 @@ class AudioService {
       // Wait for completion or timeout
       try {
         await listeningCompleter.future.timeout(
-          timeout ?? const Duration(seconds: 35), // Increased timeout to match listenFor
+          timeout ?? const Duration(seconds: 35), // Timeout buffer
           onTimeout: () {
             print('⏰ Speech recognition timeout');
             sessionComplete = true;
@@ -296,12 +316,16 @@ class AudioService {
         print('❌ Listening timeout: $e');
       }
 
-      // Ensure we stop listening
+      // Force stop and cleanup
       if (_speech.isListening) {
+        print('AudioService: Force stopping speech recognition...');
         await _speech.stop();
       }
 
-      print('\n� SPEECH RECOGNITION RESULT:');
+      // Additional cleanup wait
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      print('\n📝 SPEECH RECOGNITION RESULT:');
       print('Final text: "${finalResult ?? 'NONE'}"');
       print('Session complete: $sessionComplete');
 
@@ -318,10 +342,11 @@ class AudioService {
     } catch (e) {
       print('❌ Speech recognition error: $e');
       
-      // Ensure cleanup
+      // Force cleanup on error
       try {
         if (_speech.isListening) {
           await _speech.stop();
+          await Future.delayed(const Duration(milliseconds: 500));
         }
       } catch (stopError) {
         print('Error stopping speech: $stopError');

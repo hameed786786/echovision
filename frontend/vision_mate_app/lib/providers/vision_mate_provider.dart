@@ -530,8 +530,18 @@ class VisionMateProvider extends ChangeNotifier {
       await Future.delayed(Duration(milliseconds: 1500));
       await AudioService.speakStatus('Take your time, you have 30 seconds.');
       
-      // Wait for instruction to complete before starting to listen
-      await Future.delayed(Duration(milliseconds: 2000));
+      // Wait for instruction to complete and ensure TTS is finished
+      await Future.delayed(Duration(milliseconds: 2500));
+      
+      // Ensure all audio processing is complete
+      print('VisionMateProvider: Waiting for TTS to complete...');
+      while (AudioService.isBusy) {
+        await Future.delayed(Duration(milliseconds: 200));
+      }
+      print('VisionMateProvider: TTS completed, starting speech recognition...');
+
+      // Give haptic feedback when actually starting to listen
+      await HapticService.lightVibration();
 
       // Listen for user's voice command with extended timeout
       String? voiceCommand = await AudioService.listen(timeout: Duration(seconds: 30));
@@ -673,11 +683,21 @@ class VisionMateProvider extends ChangeNotifier {
       await HapticService.lightVibration();
       await AudioService.speakStatus('Where would you like to go? Describe the place or object.');
 
-      // Wait for instruction to complete before starting to listen
-      await Future.delayed(Duration(milliseconds: 2000));
+      // Wait for instruction to complete and ensure TTS is finished
+      await Future.delayed(Duration(milliseconds: 3000)); // Increased wait time
+      
+      // Ensure all audio processing is complete
+      print('VisionMateProvider: Waiting for TTS to complete...');
+      while (AudioService.isBusy) {
+        await Future.delayed(Duration(milliseconds: 200));
+      }
+      print('VisionMateProvider: TTS completed, starting speech recognition...');
+
+      // Give haptic feedback when actually starting to listen
+      await HapticService.lightVibration();
 
       // Listen for user's destination
-      String? destination = await AudioService.listen(timeout: Duration(seconds: 30)); // Also increased timeout
+      String? destination = await AudioService.listen(timeout: Duration(seconds: 30));
       if (destination?.trim().isEmpty ?? true) {
         await AudioService.speakImportant('No destination received. Please try again.');
         return;
