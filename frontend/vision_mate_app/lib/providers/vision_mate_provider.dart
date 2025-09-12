@@ -200,12 +200,17 @@ class VisionMateProvider extends ChangeNotifier {
       await HapticService.lightVibration();
 
       // Longer delay to ensure TTS finishes before starting STT
-      await Future.delayed(const Duration(milliseconds: 1500));
+      await Future.delayed(const Duration(milliseconds: 2000));
+
+      // Add a simple microphone test
+      print('VisionMateProvider: Testing microphone availability...');
+      bool micAvailable = await AudioService.hasPermission();
+      print('VisionMateProvider: Microphone available: $micAvailable');
 
       // Listen for question with enhanced debugging
       print('VisionMateProvider: Starting voice recognition...');
       String? question = await AudioService.listen(
-        timeout: const Duration(seconds: 20), // Increased timeout
+        timeout: const Duration(seconds: 15), // Reduced timeout for better reliability
       );
       print('VisionMateProvider: Voice recognition completed');
       print('VisionMateProvider: Recognized question: "$question"');

@@ -208,9 +208,7 @@ class AudioService {
   static bool get isBusy => _isSpeaking || _isProcessingQueue || _speechQueue.isNotEmpty;
 
   static Future<String?> listen({Duration? timeout}) async {
-    print(
-      'AudioService: listen() called with timeout: ${timeout?.inSeconds ?? 10}s',
-    );
+    print('AudioService: listen() called with timeout: ${timeout?.inSeconds ?? 10}s');
 
     if (!_isInitialized) {
       print('AudioService: Not initialized, initializing now...');
@@ -218,203 +216,115 @@ class AudioService {
     }
 
     try {
-      // Re-initialize speech recognition with proper error handling
-      print('AudioService: Re-initializing speech recognition...');
+      // Completely reinitialize speech recognition each time for reliability
+      print('AudioService: Fresh speech recognition initialization...');
+      
+      // Stop any existing session
+      if (_speech.isListening) {
+        await _speech.stop();
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+
       bool available = await _speech.initialize(
-        onStatus: (val) {
-          print('AudioService: STT status: $val');
-          if (val == 'listening') {
-            print('🎙️ MICROPHONE IS NOW ACTIVE - SPEAK NOW!');
+        onStatus: (status) {
+          print('AudioService: STT Status: $status');
+          if (status == 'listening') {
+            print('🎙️ LISTENING NOW - SPEAK CLEARLY!');
+          } else if (status == 'notListening') {
+            print('🔇 Not listening anymore');
+          } else if (status == 'done') {
+            print('✅ Speech recognition session completed');
           }
         },
-        onError: (val) {
-          print('AudioService: STT error: $val');
-          if (val.errorMsg == 'error_no_match') {
-            print('🔇 NO SPEECH DETECTED - Try speaking louder or closer to microphone');
-          }
+        onError: (error) {
+          print('AudioService: STT Error: ${error.errorMsg}');
+          print('AudioService: Error permanent: ${error.permanent}');
         },
       );
 
       if (!available) {
-        print('AudioService: Speech recognition not available on this device');
+        print('❌ Speech recognition not available');
         return null;
       }
 
-      print('AudioService: Speech recognition initialized successfully');
+      // Wait a moment for initialization
+      await Future.delayed(const Duration(milliseconds: 300));
 
-      // Check available locales
-      List<stt.LocaleName> locales = await _speech.locales();
-      print('AudioService: Available locales: ${locales.map((l) => '${l.localeId} (${l.name})').join(', ')}');
+      String? finalResult;
+      bool sessionComplete = false;
+      Completer<void> listeningCompleter = Completer<void>();
 
-      // Find best English locale
-      stt.LocaleName? englishLocale = locales.firstWhere(
-        (locale) => locale.localeId.toLowerCase().startsWith('en'),
-        orElse: () => locales.isNotEmpty ? locales.first : stt.LocaleName('en-US', 'English (US)'),
-      );
-      print('AudioService: Selected locale: ${englishLocale.localeId} (${englishLocale.name})');
+      print('\n🎙️ STARTING SIMPLE SPEECH RECOGNITION 🎙️');
+      print('Speak clearly now...\n');
 
-      // Check microphone permission
-      bool hasPermission = await _speech.hasPermission;
-      print('AudioService: Has microphone permission: $hasPermission');
-
-      if (!hasPermission) {
-        print('AudioService: Requesting microphone permission...');
-        // Try to initialize again to request permissions
-        bool permissionGranted = await _speech.initialize(
-          onStatus: (val) => print('AudioService: Permission STT status: $val'),
-          onError: (val) => print('AudioService: Permission STT error: $val'),
-        );
-        if (!permissionGranted) {
-          print('AudioService: Microphone permission denied');
-          return null;
-        }
-        print('AudioService: Microphone permission granted');
-      }
-
-      String? recognizedText;
-      bool isComplete = false;
-
-      // 🎙️ LISTENING START BANNER
-      print('\n${'🎙️' * 35}');
-      print('🎙️ STARTING SPEECH RECOGNITION');
-      print('🎙️ Timeout: ${timeout?.inSeconds ?? 15} seconds');
-      print('🎙️ Locale: ${englishLocale.localeId}');
-      print('🎙️ Please speak clearly and loudly...');
-      print('🎙️' * 35 + '\n');
-
-      print('AudioService: Starting to listen...');
-
-      // Enhanced listening with better parameters
+      // Simple listen call with minimal parameters
       await _speech.listen(
-        onResult: (val) {
-          recognizedText = val.recognizedWords;
-
-          // 🎤 CLEAR SPEECH TEXT DISPLAY IN TERMINAL
-          print('=' * 60);
-          print('🎤 SPEECH RECOGNIZED:');
-          print('   Text: "${recognizedText ?? 'No text'}"');
-          print('   Type: ${val.finalResult ? 'FINAL' : 'PARTIAL'}');
-          print('   Confidence: ${(val.confidence * 100).toStringAsFixed(1)}%');
-          print('   Has alternatives: ${val.alternates.isNotEmpty}');
-          if (val.alternates.isNotEmpty) {
-            print('   Alternatives: ${val.alternates.map((alt) => '"${alt.recognizedWords}" (${(alt.confidence * 100).toStringAsFixed(1)}%)').join(', ')}');
-          }
-          print('=' * 60);
-
-          // Additional debugging info
-          print('AudioService: Partial result: "$recognizedText"');
-          print('AudioService: Is final result: ${val.finalResult}');
-          print('AudioService: Confidence: ${val.confidence}');
-
-          if (val.finalResult) {
-            isComplete = true;
-            print('AudioService: Final result received!');
-
-            // 🎯 FINAL SPEECH RESULT BANNER
-            print('\n${'🎯' * 30}');
-            print('🎯 FINAL SPEECH RESULT:');
-            print('🎯 "${recognizedText ?? 'No text recognized'}"');
-            print('🎯' * 30 + '\n');
+        onResult: (result) {
+          print('🎤 Result: "${result.recognizedWords}"');
+          print('   Final: ${result.finalResult}');
+          print('   Confidence: ${(result.confidence * 100).toStringAsFixed(1)}%');
+          
+          if (result.finalResult) {
+            finalResult = result.recognizedWords;
+            sessionComplete = true;
+            if (!listeningCompleter.isCompleted) {
+              listeningCompleter.complete();
+            }
+          } else {
+            // Update partial result
+            finalResult = result.recognizedWords;
           }
         },
-        onSoundLevelChange: (level) {
-          // Only log significant sound levels to avoid spam
-          if (level > 0.1) {
-            print('AudioService: Sound level: ${level.toStringAsFixed(2)} (Good!)');
-          } else if (level > 0.01) {
-            print('AudioService: Sound level: ${level.toStringAsFixed(3)} (Quiet)');
-          }
-        },
-        localeId: englishLocale.localeId,
-        listenFor: timeout ?? const Duration(seconds: 20), // Increased timeout
-        pauseFor: const Duration(seconds: 2), // Reduced pause duration
-        partialResults: true, // Enable partial results for better feedback
-        cancelOnError: false, // Don't cancel on error, continue listening
-        listenMode: stt.ListenMode.confirmation, // Use confirmation mode for better accuracy
+        listenFor: timeout ?? const Duration(seconds: 15),
+        pauseFor: const Duration(seconds: 3),
+        partialResults: true,
+        cancelOnError: false,
       );
 
-      print('AudioService: Listening started, waiting for speech...');
-
-      // Wait for listening to complete or timeout
-      int waitTime = 0;
-      int maxWaitTime = (timeout?.inMilliseconds ?? 20000);
-
-      while (!isComplete && _speech.isListening && waitTime < maxWaitTime) {
-        await Future.delayed(const Duration(milliseconds: 300));
-        waitTime += 300;
-
-        // Log progress every 3 seconds with tips
-        if (waitTime % 3000 == 0) {
-          int secondsElapsed = waitTime ~/ 1000;
-          print('AudioService: Still listening... ${secondsElapsed}s elapsed');
-          print('AudioService: Is listening: ${_speech.isListening}');
-          print('AudioService: Current text: "$recognizedText"');
-          
-          if (secondsElapsed == 6 && (recognizedText == null || recognizedText!.isEmpty)) {
-            print('💡 TIP: Speak clearly and loudly. Make sure you\'re close to the microphone.');
-          } else if (secondsElapsed == 12 && (recognizedText == null || recognizedText!.isEmpty)) {
-            print('💡 TIP: Try speaking a simple phrase like "What is this?" or "Describe this scene"');
-          }
-        }
+      // Wait for completion or timeout
+      try {
+        await listeningCompleter.future.timeout(
+          timeout ?? const Duration(seconds: 18),
+          onTimeout: () {
+            print('⏰ Speech recognition timeout');
+            sessionComplete = true;
+          },
+        );
+      } catch (e) {
+        print('❌ Listening timeout: $e');
       }
 
-      // Stop listening if still active
+      // Ensure we stop listening
       if (_speech.isListening) {
-        print('AudioService: Stopping speech recognition...');
         await _speech.stop();
       }
 
-      print('AudioService: Listening session completed');
+      print('\n� SPEECH RECOGNITION RESULT:');
+      print('Final text: "${finalResult ?? 'NONE'}"');
+      print('Session complete: $sessionComplete');
 
-      // 📋 FINAL SPEECH SUMMARY
-      print('\n${'📋' * 40}');
-      print('📋 SPEECH RECOGNITION SUMMARY:');
-      print('📋 Final Text: "${recognizedText ?? 'NONE'}"');
-      print('📋 Text Length: ${recognizedText?.length ?? 0} characters');
-      print('📋 Session Status: ${isComplete ? 'COMPLETED' : 'TIMEOUT/INCOMPLETE'}');
-      print('📋' * 40 + '\n');
-
-      print('AudioService: Final recognized text: "$recognizedText"');
-      print('AudioService: Text length: ${recognizedText?.length ?? 0}');
-
-      // Return result if we have meaningful text
-      if (recognizedText != null && recognizedText!.trim().isNotEmpty) {
-        // ✅ SUCCESS BANNER
-        print('\n${'✅' * 35}');
-        print('✅ SPEECH SUCCESSFULLY RECOGNIZED!');
-        print('✅ Returning: "${recognizedText!.trim()}"');
-        print('✅' * 35 + '\n');
-
-        print('AudioService: Returning recognized text: "$recognizedText"');
-        return recognizedText!.trim();
+      if (finalResult != null && finalResult!.trim().isNotEmpty) {
+        String cleanResult = finalResult!.trim();
+        print('✅ SUCCESS: "$cleanResult"');
+        return cleanResult;
       } else {
-        // ❌ NO SPEECH BANNER
-        print('\n${'❌' * 35}');
-        print('❌ NO SPEECH RECOGNIZED');
-        print('❌ Reason: Empty or null text');
-        print('❌ Troubleshooting tips:');
-        print('❌ 1. Check microphone permissions');
-        print('❌ 2. Speak louder and clearer');
-        print('❌ 3. Reduce background noise');
-        print('❌ 4. Hold device closer to mouth');
-        print('❌' * 35 + '\n');
-
-        print('AudioService: No meaningful text recognized');
+        print('❌ NO SPEECH DETECTED');
+        print('💡 Try speaking louder and clearer');
         return null;
       }
-    } catch (e) {
-      print('AudioService: Error during listening: $e');
-      print('AudioService: Error type: ${e.runtimeType}');
 
-      // Try to stop listening if there was an error
+    } catch (e) {
+      print('❌ Speech recognition error: $e');
+      
+      // Ensure cleanup
       try {
         if (_speech.isListening) {
           await _speech.stop();
         }
       } catch (stopError) {
-        print('AudioService: Error stopping speech: $stopError');
+        print('Error stopping speech: $stopError');
       }
-
+      
       return null;
     }
   }
