@@ -1796,10 +1796,10 @@ if __name__ == "__main__":
     
     print(f"\n🚀 Starting Vision Mate Backend Server...")
     print(f"📍 Local access: http://127.0.0.1:{port}")
-    print(f"📍 Network access: http://10.227.99.126:{port}")
-    print(f"📍 Health check: http://10.227.99.126:{port}/health")
+    print(f"📍 Network access: http://10.123.74.126:{port}")
+    print(f"📍 Health check: http://10.123.74.126:{port}/health")
     print("🔧 Make sure your phone and laptop are on the same WiFi!")
-    print("📱 Flutter app configured for: http://10.227.99.126:8000")
+    print("📱 Flutter app configured for: http://10.123.74.126:8000")
     print("=" * 65)
     
     uvicorn.run(app, host=host, port=port)
