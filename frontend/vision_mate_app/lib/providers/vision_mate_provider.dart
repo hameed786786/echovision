@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'dart:typed_data';
+import 'dart:async';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/api_models.dart';
 import '../services/api_service.dart';
@@ -458,6 +459,166 @@ class VisionMateProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Real-time continuous navigation
+  Timer? _navigationTimer;
+  String? _currentNavigationTarget;
+  bool _isRealTimeNavigationActive = false;
+
+  bool get isRealTimeNavigationActive => _isRealTimeNavigationActive;
+
+  Future<void> startRealTimeNavigation() async {
+    print('VisionMateProvider: startRealTimeNavigation() called');
+    if (_currentState != AppState.idle) {
+      print('VisionMateProvider: Not idle, current state: $_currentState');
+      return;
+    }
+
+    try {
+      _currentState = AppState.listening;
+      notifyListeners();
+
+      await HapticService.lightVibration();
+      await AudioService.speakStatus('Where would you like continuous navigation to?');
+
+      // Wait for instruction to complete and ensure TTS is finished
+      await Future.delayed(Duration(milliseconds: 3000));
+      
+      // Ensure all audio processing is complete
+      print('VisionMateProvider: Waiting for TTS to complete...');
+      while (AudioService.isBusy) {
+        await Future.delayed(Duration(milliseconds: 200));
+      }
+      print('VisionMateProvider: TTS completed, starting speech recognition...');
+
+      // Give haptic feedback when actually starting to listen
+      await HapticService.lightVibration();
+
+      // Listen for destination
+      String? destination = await AudioService.listen(timeout: Duration(seconds: 30));
+      if (destination?.trim().isEmpty ?? true) {
+        await AudioService.speakImportant('No destination received. Please try again.');
+        return;
+      }
+
+      print('VisionMateProvider: Starting real-time navigation to: "$destination"');
+      _currentNavigationTarget = destination;
+      _isRealTimeNavigationActive = true;
+
+      await AudioService.speakAnnouncement('Starting continuous navigation to $destination. I will guide you every 5 seconds. Swipe left to stop navigation.');
+
+      // Start continuous navigation updates
+      _startContinuousNavigation();
+
+    } catch (e) {
+      print('VisionMateProvider Error in startRealTimeNavigation: $e');
+      _currentState = AppState.speaking;
+      notifyListeners();
+
+      await AudioService.speakImportant('Could not start real-time navigation. Please try again.');
+      await HapticService.errorPattern();
+    } finally {
+      _currentState = AppState.idle;
+      notifyListeners();
+    }
+  }
+
+  void _startContinuousNavigation() {
+    // Cancel any existing timer
+    _navigationTimer?.cancel();
+
+    // Start continuous navigation with 5-second intervals
+    _navigationTimer = Timer.periodic(Duration(seconds: 5), (timer) async {
+      if (!_isRealTimeNavigationActive || _currentNavigationTarget == null) {
+        timer.cancel();
+        return;
+      }
+
+      await _provideContinuousGuidance();
+    });
+  }
+
+  Future<void> _provideContinuousGuidance() async {
+    if (_currentState != AppState.idle) {
+      return; // Skip this cycle if busy
+    }
+
+    try {
+      _currentState = AppState.analyzing;
+      notifyListeners();
+
+      // Capture image for navigation analysis
+      Uint8List? imageBytes = await CameraService.captureImage();
+      if (imageBytes == null) {
+        return; // Skip this cycle
+      }
+
+      // Send to backend for navigation guidance
+      final response = await ApiService.navigateTo(imageBytes, _currentNavigationTarget!);
+      
+      if (response != null) {
+        _currentState = AppState.speaking;
+        notifyListeners();
+
+        // Provide concise navigation instruction
+        String guidance = _extractNavigationGuidance(response);
+        if (guidance.isNotEmpty) {
+          await AudioService.speakInstruction(guidance);
+        }
+
+        // Check if destination reached
+        if (response['status'] == 'reached' || response['response']?.toLowerCase().contains('reached') == true) {
+          await AudioService.speakAnnouncement('Destination reached! Stopping navigation.');
+          stopRealTimeNavigation();
+        }
+      }
+
+    } catch (e) {
+      print('VisionMateProvider Error in continuous guidance: $e');
+      // Continue navigation even if one cycle fails
+    } finally {
+      _currentState = AppState.idle;
+      notifyListeners();
+    }
+  }
+
+  String _extractNavigationGuidance(Map<String, dynamic> response) {
+    // Extract concise navigation instructions
+    if (response['instruction'] != null) {
+      String instruction = response['instruction'];
+      
+      // Make instructions more concise for continuous guidance
+      instruction = instruction
+          .replaceAll('Navigate to', '')
+          .replaceAll('Go to', '')
+          .replaceAll('Head to', '')
+          .replaceAll('Walk to', '')
+          .trim();
+
+      // Limit instruction length for quick delivery
+      if (instruction.length > 100) {
+        List<String> words = instruction.split(' ');
+        instruction = words.take(15).join(' ') + '...';
+      }
+
+      return instruction;
+    }
+
+    if (response['direction'] != null) {
+      return 'Continue ${response['direction']}';
+    }
+
+    return ''; // No guidance available this cycle
+  }
+
+  void stopRealTimeNavigation() {
+    print('VisionMateProvider: Stopping real-time navigation');
+    _isRealTimeNavigationActive = false;
+    _currentNavigationTarget = null;
+    _navigationTimer?.cancel();
+    _navigationTimer = null;
+    notifyListeners();
+  }
+
   String _createDetailedDescription(
     String baseDescription,
     List<ObjectDetection> objects,
@@ -854,10 +1015,11 @@ class VisionMateProvider extends ChangeNotifier {
 Welcome to Vision Mate. Here are your gesture commands:
 Swipe up to describe your surroundings.
 Swipe right to ask a question about what you see.
-Swipe left to stop current audio.
+Swipe left to stop current audio or navigation.
 Swipe down to repeat the last message.
 Diagonal swipe up and right to find a specific object.
 Diagonal swipe down and left to navigate to a place.
+Diagonal swipe down and right for real-time continuous navigation.
 Double tap to stop audio.
 Long press for emergency mode.
 Triple tap to hear this help again.
@@ -883,6 +1045,7 @@ Note: Flashlight turns on automatically in low light conditions.
 
   @override
   void dispose() {
+    _navigationTimer?.cancel();
     _guidanceService.stop();
     CameraService.dispose();
     super.dispose();

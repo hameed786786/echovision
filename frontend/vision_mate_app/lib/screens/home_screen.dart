@@ -341,6 +341,12 @@ class _VisionMateHomePageState extends State<VisionMateHomePage> {
                 ),
                 const SizedBox(height: 16),
                 const Text(
+                  '↘ Swipe Down-Right: Real-time navigation',
+                  style: TextStyle(color: Colors.cyan, fontSize: 16),
+                  semanticsLabel: 'Swipe diagonally down and right for continuous real-time navigation',
+                ),
+                const SizedBox(height: 16),
+                const Text(
                   '↓ Swipe Down: Repeat last message',
                   style: TextStyle(color: Colors.white, fontSize: 16),
                   semanticsLabel: 'Swipe down to repeat the last message',
@@ -461,16 +467,28 @@ class _VisionMateHomePageState extends State<VisionMateHomePage> {
       context.read<VisionMateProvider>().announceCurrentAction('Where would you like to go?');
       provider.navigateToDestination();
     }
+    // Diagonal swipe (down-right) - real-time navigation
+    else if (velocity.dx > threshold * 0.7 && velocity.dy > threshold * 0.7) {
+      print('HomeScreen: ✅ DIAGONAL SWIPE (DOWN-RIGHT) detected - starting real-time navigation');
+      context.read<VisionMateProvider>().announceCurrentAction('Starting real-time navigation');
+      provider.startRealTimeNavigation();
+    }
     // Swipe down - repeat last message
     else if (velocity.dy > threshold) {
       print('HomeScreen: ✅ SWIPE DOWN detected - repeating last message');
       context.read<VisionMateProvider>().announceCurrentAction('Repeating last message');
       provider.repeatLastMessage();
     }
-    // Swipe left - stop audio
+    // Swipe left - stop audio or real-time navigation
     else if (velocity.dx < -threshold) {
-      print('HomeScreen: ✅ SWIPE LEFT detected - stopping audio');
-      provider.stopAudio();
+      print('HomeScreen: ✅ SWIPE LEFT detected - stopping audio/navigation');
+      final provider = context.read<VisionMateProvider>();
+      if (provider.isRealTimeNavigationActive) {
+        provider.announceCurrentAction('Stopping real-time navigation');
+        provider.stopRealTimeNavigation();
+      } else {
+        provider.stopAudio();
+      }
     } else {
       print(
         'HomeScreen: ❌ Gesture not recognized - velocity too low (threshold: $threshold)',
