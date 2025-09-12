@@ -524,7 +524,14 @@ class VisionMateProvider extends ChangeNotifier {
       notifyListeners();
 
       await HapticService.lightVibration();
-      await AudioService.speakStatus('What object are you looking for? Take your time, you have 30 seconds.');
+      await AudioService.speakStatus('What object are you looking for?');
+      
+      // Wait for first message to complete, then give the time instruction
+      await Future.delayed(Duration(milliseconds: 1500));
+      await AudioService.speakStatus('Take your time, you have 30 seconds.');
+      
+      // Wait for instruction to complete before starting to listen
+      await Future.delayed(Duration(milliseconds: 2000));
 
       // Listen for user's voice command with extended timeout
       String? voiceCommand = await AudioService.listen(timeout: Duration(seconds: 30));
@@ -666,8 +673,11 @@ class VisionMateProvider extends ChangeNotifier {
       await HapticService.lightVibration();
       await AudioService.speakStatus('Where would you like to go? Describe the place or object.');
 
+      // Wait for instruction to complete before starting to listen
+      await Future.delayed(Duration(milliseconds: 2000));
+
       // Listen for user's destination
-      String? destination = await AudioService.listen(timeout: Duration(seconds: 10));
+      String? destination = await AudioService.listen(timeout: Duration(seconds: 30)); // Also increased timeout
       if (destination?.trim().isEmpty ?? true) {
         await AudioService.speakImportant('No destination received. Please try again.');
         return;
