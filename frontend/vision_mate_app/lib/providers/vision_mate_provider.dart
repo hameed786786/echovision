@@ -524,10 +524,10 @@ class VisionMateProvider extends ChangeNotifier {
       notifyListeners();
 
       await HapticService.lightVibration();
-      await AudioService.speakStatus('What object are you looking for?');
+      await AudioService.speakStatus('What object are you looking for? Take your time, you have 30 seconds.');
 
-      // Listen for user's voice command
-      String? voiceCommand = await AudioService.listen(timeout: Duration(seconds: 10));
+      // Listen for user's voice command with extended timeout
+      String? voiceCommand = await AudioService.listen(timeout: Duration(seconds: 30));
       if (voiceCommand?.trim().isEmpty ?? true) {
         await AudioService.speakImportant('No voice command received. Please try again.');
         return;
@@ -538,9 +538,11 @@ class VisionMateProvider extends ChangeNotifier {
       _currentState = AppState.analyzing;
       notifyListeners();
 
-      await AudioService.speakStatus('Searching for $voiceCommand...');
+      await AudioService.speakStatus('Got it! Searching for $voiceCommand...');
+      await Future.delayed(Duration(milliseconds: 800)); // Give time for speech
 
       // Capture image
+      await AudioService.speakStatus('Taking a picture...');
       Uint8List? imageBytes = await CameraService.captureImage();
       if (imageBytes == null) {
         throw Exception('Failed to capture image');
@@ -549,6 +551,8 @@ class VisionMateProvider extends ChangeNotifier {
       // Send to backend for specific object detection
       _currentState = AppState.processing;
       notifyListeners();
+
+      await AudioService.speakStatus('Analyzing the image for your object...');
 
       final response = await ApiService.findObject(imageBytes, voiceCommand!);
       
@@ -567,23 +571,23 @@ class VisionMateProvider extends ChangeNotifier {
             Map<String, dynamic> precisePos = response['precise_position'];
             
             // Wait a moment then provide navigation details
-            await Future.delayed(Duration(milliseconds: 800));
+            await Future.delayed(Duration(milliseconds: 1200));
             
-            // Announce turn-by-turn navigation
+            // Announce turn-by-turn navigation with proper pacing
             if (precisePos['navigation_steps'] != null) {
               List<dynamic> steps = precisePos['navigation_steps'];
-              await AudioService.speakInstruction('Navigation instructions:');
+              await AudioService.speakInstruction('Here are your navigation steps:');
               
               for (int i = 0; i < steps.length && i < 3; i++) {
-                await Future.delayed(Duration(milliseconds: 600));
-                await AudioService.speakInstruction(steps[i].toString());
+                await Future.delayed(Duration(milliseconds: 1000)); // Better pacing
+                await AudioService.speakInstruction('Step ${i + 1}: ${steps[i].toString()}');
               }
             }
             
-            // Provide distance guidance
+            // Provide distance guidance with better timing
             if (precisePos['distance_guidance'] != null) {
-              await Future.delayed(Duration(milliseconds: 600));
-              await AudioService.speakInstruction(precisePos['distance_guidance']);
+              await Future.delayed(Duration(milliseconds: 1000));
+              await AudioService.speakInstruction('Distance guidance: ${precisePos['distance_guidance']}');
             }
           }
           
