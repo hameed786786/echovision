@@ -20,7 +20,6 @@ import easyocr
 
 load_dotenv()
 
-# Set up Hugging Face authentication
 huggingface_token = os.getenv("HUGGINGFACE_TOKEN")
 if huggingface_token:
     os.environ["HUGGINGFACE_HUB_TOKEN"] = huggingface_token
@@ -28,11 +27,9 @@ if huggingface_token:
 else:
     print("⚠️  No Hugging Face token found - some models may download slower")
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global variables for models
 yolo_model = None
 blip_model = None
 blip_processor = None
@@ -40,30 +37,25 @@ openai_client = None
 ocr_reader = None
 device = None
 
-# API Models
 from pydantic import BaseModel, root_validator, Field
 from typing import List, Optional, Dict, Any
 
 
 class ObjectDetection(BaseModel):
-    """Represents an object detection; supports either bbox=[x1,y1,x2,y2] or x,y,w,h from frontend."""
     name: str
     confidence: float
-    # Accept either format (both optional for input flexibility)
-    bbox: Optional[List[float]] = None  # [x1,y1,x2,y2]
+    bbox: Optional[List[float]] = None
     x: Optional[float] = None
     y: Optional[float] = None
     w: Optional[float] = None
     h: Optional[float] = None
-    # Enhanced fields for LiDAR and positioning
-    distance: Optional[float] = None  # Distance in meters
-    is_lidar_measured: bool = False  # Whether distance was measured using LiDAR
-    position: Optional[str] = None  # Position description (e.g., "center left")
-    angle: Optional[float] = None  # Angle from center in degrees
+    distance: Optional[float] = None
+    is_lidar_measured: bool = False
+    position: Optional[str] = None
+    angle: Optional[float] = None
 
     @root_validator(pre=True)
-    def ensure_bbox(cls, values):  # type: ignore
-        # If bbox not provided but x,y,w,h are, build it
+    def ensure_bbox(cls, values):
         if 'bbox' not in values or values.get('bbox') is None:
             x = values.get('x')
             y = values.get('y')
@@ -81,7 +73,6 @@ class ObjectDetection(BaseModel):
         return values
 
     def to_client_dict(self) -> dict:
-        """Return dict shape expected by Flutter (x,y,w,h) with enhanced data."""
         if self.bbox and len(self.bbox) == 4:
             x1, y1, x2, y2 = self.bbox
             x = int(x1)
@@ -89,7 +80,6 @@ class ObjectDetection(BaseModel):
             w = int(max(0, x2 - x1))
             h = int(max(0, y2 - y1))
         else:
-            # Fall back to provided separate values
             x = int(self.x or 0)
             y = int(self.y or 0)
             w = int(self.w or 0)
@@ -104,7 +94,6 @@ class ObjectDetection(BaseModel):
             "h": h,
         }
         
-        # Add enhanced data if available
         if self.distance is not None:
             result["distance"] = float(self.distance)
             result["is_lidar_measured"] = self.is_lidar_measured
@@ -120,18 +109,18 @@ class ObjectDetection(BaseModel):
 
 class QuestionRequest(BaseModel):
     question: str
-    scene_description: Optional[str] = ""  # optional => prevents 422
-    objects: Optional[List[ObjectDetection]] = None  # will coerce to [] in logic
+    scene_description: Optional[str] = ""
+    objects: Optional[List[ObjectDetection]] = None
 
 
 class ObjectSearchRequest(BaseModel):
-    image_data: str  # base64 encoded image
-    object_name: str  # object to search for
+    image_data: str
+    object_name: str
 
 
 class NavigationRequest(BaseModel):
-    image_data: str  # base64 encoded image
-    destination: str  # place or object to navigate to
+    image_data: str
+    destination: str
 
 
 class AnswerResponse(BaseModel):
@@ -160,7 +149,6 @@ class GuideResponse(BaseModel):
     objects: List[ObjectDetection]
     obstacles: List[ObstacleInfo] = Field(default_factory=list)
 
-# Create FastAPI app
 app = FastAPI(
     title="Vision Mate Backend",
     description="AI-powered navigation assistant for visually impaired users",
@@ -169,23 +157,19 @@ app = FastAPI(
 
 @app.on_event("startup")
 async def startup_event():
-    """Load models on startup"""
     global yolo_model, blip_model, blip_processor, openai_client, ocr_reader, device
     
     try:
         print("🔄 Loading AI models...")
         logger.info("Starting up...")
         
-        # Detect device
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logger.info(f"Using device: {device}")
         print(f"🔧 Using device: {device}")
         
-        # Load YOLOv8n model
         logger.info("Loading YOLOv8n model...")
         print("🔄 Loading YOLOv8n model...")
         try:
-            # Handle PyTorch 2.6+ compatibility for YOLO model loading
             import warnings
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -197,7 +181,6 @@ async def startup_event():
             print(f"❌ YOLOv8n model failed to load: {yolo_err}")
             raise
         
-        # Load BLIP-2 model
         logger.info("Loading BLIP-2 model...")
         print("🔄 Loading BLIP-2 model...")
         model_kwargs = {}
@@ -214,20 +197,16 @@ async def startup_event():
             print(f"❌ BLIP-2 model failed to load: {blip_err}")
             raise
         
-        # Initialize OCR Reader
         logger.info("Loading OCR reader...")
         print("🔄 Loading OCR reader...")
         try:
-            # Initialize EasyOCR with English support (can add more languages)
             ocr_reader = easyocr.Reader(['en'], gpu=(device.type == 'cuda'))
             print("✅ OCR reader loaded successfully!")
         except Exception as ocr_err:
             print(f"❌ OCR reader failed to load: {ocr_err}")
-            # OCR is optional, so don't raise - just log the error
             logger.warning(f"OCR initialization failed: {ocr_err}")
             ocr_reader = None
         
-        # Initialize OpenAI client
         print("🔄 Loading OpenAI client...")
         openai_api_key = os.getenv("OPENAI_API_KEY")
         if openai_api_key:
@@ -235,7 +214,6 @@ async def startup_event():
                 openai_client = openai.OpenAI(api_key=openai_api_key)
                 print("✅ OpenAI client loaded successfully!")
             except TypeError:
-                # Fallback for older OpenAI client versions
                 openai.api_key = openai_api_key
                 openai_client = openai
                 print("✅ OpenAI client loaded (fallback method)!")
@@ -252,9 +230,8 @@ async def startup_event():
         print(f"❌ STARTUP FAILED: {error_msg}")
         import traceback
         traceback.print_exc()
-        raise  # Re-raise to prevent server from starting with failed models
+        raise
 
-# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -269,7 +246,6 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Detailed health check"""
     return {
         "status": "healthy",
         "models": {
@@ -282,16 +258,11 @@ async def health_check():
     }
 
 def _focused_description(objects: List[ObjectDetection]) -> str:
-    """Generate concise, navigation-focused description from detected objects.
-    Rules: prioritize people, vehicles, obstacles; mention counts and relative position (left/center/right).
-    Limit to ~110 characters.
-    """
     if not objects:
         return "No clear objects ahead. Path may be open."
 
-    # Map priority groups
     priority_order = [
-        {"person"},  # highest
+        {"person"},
         {"car", "bus", "truck", "motorcycle", "bicycle"},
         {"dog", "cat"},
         {"chair", "bench"},
@@ -302,7 +273,6 @@ def _focused_description(objects: List[ObjectDetection]) -> str:
             return "center"
         x1, _, x2, _ = obj.bbox
         mid = (x1 + x2) / 2.0
-        # Normalize using assumed image width ~640 if not provided
         width = 640.0
         rel = mid / width
         if rel < 0.33:
@@ -311,14 +281,12 @@ def _focused_description(objects: List[ObjectDetection]) -> str:
             return "right"
         return "center"
 
-    # Count objects by name & position
     info: Dict[tuple, int] = {}
     for o in objects:
         pos = horiz_pos(o)
         key = (o.name, pos)
         info[key] = info.get(key, 0) + 1
 
-    # Build sentences by priority
     phrases = []
     used_names = set()
     for group in priority_order:
@@ -327,7 +295,6 @@ def _focused_description(objects: List[ObjectDetection]) -> str:
         ]
         if not group_entries:
             continue
-        # aggregate counts across positions for same name
         name_totals: Dict[str, int] = {}
         for name, pos, cnt in group_entries:
             name_totals[name] = name_totals.get(name, 0) + cnt
@@ -345,7 +312,6 @@ def _focused_description(objects: List[ObjectDetection]) -> str:
             )
             phrases.append(phrase)
             used_names.add(name)
-        # Stop if description getting long
         if len("; ".join(phrases)) > 90:
             break
 
@@ -364,43 +330,33 @@ def _focused_description(objects: List[ObjectDetection]) -> str:
 
 
 def _extract_text_from_image(image_array: np.ndarray) -> str:
-    """Extract text from image using OCR."""
     if ocr_reader is None:
         return ""
     
     try:
-        # EasyOCR expects image in RGB format
         if len(image_array.shape) == 3 and image_array.shape[2] == 3:
-            # Convert BGR to RGB for OCR
             rgb_image = cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB)
         else:
             rgb_image = image_array
         
-        # Extract text using EasyOCR
         results = ocr_reader.readtext(rgb_image)
         
         if not results:
             return ""
         
-        # Extract text content and filter by confidence
         text_segments = []
         for (bbox, text, confidence) in results:
-            # Only include text with reasonable confidence (>0.5)
             if confidence > 0.5 and text.strip():
-                # Clean up the text
                 cleaned_text = text.strip()
-                if len(cleaned_text) > 1:  # Skip single characters
+                if len(cleaned_text) > 1:
                     text_segments.append(cleaned_text)
         
         if not text_segments:
             return ""
         
-        # Join text segments and create a readable description
         extracted_text = " ".join(text_segments)
         
-        # Format the text for accessibility
         if len(extracted_text) > 200:
-            # Truncate very long text
             extracted_text = extracted_text[:200] + "..."
         
         return extracted_text
@@ -412,16 +368,13 @@ def _extract_text_from_image(image_array: np.ndarray) -> str:
 
 def _extract_targets(question: str) -> List[str]:
     q = question.lower()
-    # Simple keyword extraction (could be extended)
     tokens = [t.strip("?.,! ") for t in q.split()]
-    # Filter out stopwords
     stop = {"the","a","an","to","is","are","there","on","at","my","in","for","of","do","i","can","you","me","near"}
     nouns = [t for t in tokens if t and t not in stop and len(t) > 2]
     return list(dict.fromkeys(nouns))[:3]
 
 
 def _estimate_distance(obj: ObjectDetection, img_height: float = 480.0) -> str:
-    """Estimate relative distance based on object size and position."""
     if not obj.bbox or len(obj.bbox) != 4:
         return "unknown"
     
@@ -429,11 +382,9 @@ def _estimate_distance(obj: ObjectDetection, img_height: float = 480.0) -> str:
     height = y2 - y1
     bottom_y = y2
     
-    # Distance heuristics based on object size and vertical position
     rel_height = height / img_height
     rel_bottom = bottom_y / img_height
     
-    # Larger objects lower in frame = closer
     if rel_height > 0.4 and rel_bottom > 0.7:
         return "very close"
     elif rel_height > 0.25 and rel_bottom > 0.6:
@@ -447,42 +398,31 @@ def _estimate_distance(obj: ObjectDetection, img_height: float = 480.0) -> str:
 
 
 def _calculate_precise_position(obj: ObjectDetection, img_width: float = 640.0, img_height: float = 480.0) -> Dict[str, Any]:
-    """Calculate precise position with support for LiDAR distance data."""
     x1, y1, x2, y2 = obj.bbox
     center_x = (x1 + x2) / 2.0
     center_y = (y1 + y2) / 2.0
     width = x2 - x1
     height = y2 - y1
     
-    # Improved angle calculation with proper camera FOV
-    # Most smartphone cameras have horizontal FOV between 60-75 degrees
-    # iPhone: ~68°, Samsung: ~70°, most Android: ~65-70°
-    horizontal_fov_degrees = 68.0  # More accurate estimate for smartphones
+    horizontal_fov_degrees = 68.0
     
-    # Calculate angle offset from center
     img_center_x = img_width / 2.0
     horizontal_offset = center_x - img_center_x
     
-    # Convert pixel offset to angle using proper trigonometry
-    # Maximum offset corresponds to half the FOV
     max_offset_pixels = img_width / 2.0
     angle_offset = (horizontal_offset / max_offset_pixels) * (horizontal_fov_degrees / 2.0)
     
-    # Clamp to realistic range
     angle_offset = max(-45.0, min(45.0, angle_offset))
     
-    # Use LiDAR distance if available, otherwise estimate
     if obj.distance is not None and obj.is_lidar_measured:
         distance = obj.distance
         distance_source = "LiDAR"
-        confidence = 0.95  # High confidence for LiDAR measurements
+        confidence = 0.95
     else:
-        # Fallback to estimation using object size
         distance = _estimate_distance_from_size(obj, width, height, img_height)
         distance_source = "estimated"
-        confidence = 0.7  # Improved confidence with better estimation
+        confidence = 0.7
     
-    # Determine precise position description with better accuracy
     abs_angle = abs(angle_offset)
     if abs_angle < 3:
         position = "directly ahead"
@@ -495,7 +435,6 @@ def _calculate_precise_position(obj: ObjectDetection, img_width: float = 640.0, 
     else:
         position = f"extreme {'left' if angle_offset < 0 else 'right'}"
     
-    # Add vertical position context for better guidance
     img_center_y = img_height / 2.0
     vertical_offset = center_y - img_center_y
     vertical_ratio = vertical_offset / (img_height / 2.0)
@@ -508,7 +447,7 @@ def _calculate_precise_position(obj: ObjectDetection, img_width: float = 640.0, 
         vertical_pos = "at eye level"
     
     return {
-        "angle": round(angle_offset, 1),  # degrees from center (-left, +right)
+        "angle": round(angle_offset, 1),
         "distance_meters": round(distance, 1),
         "distance_source": distance_source,
         "position": position,
