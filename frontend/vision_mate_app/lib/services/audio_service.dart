@@ -255,7 +255,9 @@ class AudioService {
       Completer<void> listeningCompleter = Completer<void>();
 
       print('\n🎙️ STARTING SIMPLE SPEECH RECOGNITION 🎙️');
-      print('Speak clearly now...\n');
+      print('You have 30 seconds to ask your question...');
+      print('The app will wait 6 seconds after you stop speaking...');
+      print('Speak clearly now!\n');
 
       // Simple listen call with minimal parameters
       await _speech.listen(
@@ -275,8 +277,8 @@ class AudioService {
             finalResult = result.recognizedWords;
           }
         },
-        listenFor: timeout ?? const Duration(seconds: 15),
-        pauseFor: const Duration(seconds: 3),
+        listenFor: timeout ?? const Duration(seconds: 30), // Increased total listening time
+        pauseFor: const Duration(seconds: 6), // Increased pause tolerance - wait longer for silence
         partialResults: true,
         cancelOnError: false,
       );
@@ -284,7 +286,7 @@ class AudioService {
       // Wait for completion or timeout
       try {
         await listeningCompleter.future.timeout(
-          timeout ?? const Duration(seconds: 18),
+          timeout ?? const Duration(seconds: 35), // Increased timeout to match listenFor
           onTimeout: () {
             print('⏰ Speech recognition timeout');
             sessionComplete = true;

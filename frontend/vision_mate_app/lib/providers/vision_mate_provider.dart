@@ -209,7 +209,7 @@ class VisionMateProvider extends ChangeNotifier {
       }
 
       // Provide clear audio feedback
-      await AudioService.speakStatus('I am listening. Please ask your question clearly and loudly.');
+      await AudioService.speakStatus('I am listening. Take your time and ask your question clearly. You have 30 seconds.');
       await HapticService.lightVibration();
 
       // Longer delay to ensure TTS finishes before starting STT
@@ -223,7 +223,7 @@ class VisionMateProvider extends ChangeNotifier {
       // Listen for question with enhanced debugging
       print('VisionMateProvider: Starting voice recognition...');
       String? question = await AudioService.listen(
-        timeout: const Duration(seconds: 15), // Reduced timeout for better reliability
+        timeout: const Duration(seconds: 30), // Increased timeout to give more time for questions
       );
       print('VisionMateProvider: Voice recognition completed');
       print('VisionMateProvider: Recognized question: "$question"');
