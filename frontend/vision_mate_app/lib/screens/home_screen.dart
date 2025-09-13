@@ -26,7 +26,6 @@ class _VisionMateHomePageState extends State<VisionMateHomePage> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<VisionMateProvider>().initialize();
-      // Announce available gestures when app starts
       Future.delayed(Duration(seconds: 2), () {
         context.read<VisionMateProvider>().announceGestureHelp();
       });
